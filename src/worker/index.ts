@@ -1,6 +1,13 @@
 import { Hono } from 'hono';
 import { apiError, type AppEnv, type Bindings } from './env';
+import { runRetention } from './retention';
 import { authRoutes } from './routes/auth';
+import { checkinRoutes } from './routes/checkin';
+import { employeeRoutes } from './routes/employees';
+import { eventRoutes } from './routes/events';
+import { reportRoutes } from './routes/reports';
+import { staffRoutes } from './routes/staff';
+import { userRoutes } from './routes/users';
 
 const app = new Hono<AppEnv>().basePath('/api');
 
@@ -16,7 +23,15 @@ app.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store');
 });
 
+// 路由模組都掛在 '/'，各自寫完整路徑（例如 /events/:id）。
+// 模組內的 middleware 只能掛在各路由上，不可用 use('*')：掛在 '/' 的 use('*') 會擋到之後掛上的所有模組。
 app.route('/', authRoutes);
+app.route('/', employeeRoutes);
+app.route('/', userRoutes);
+app.route('/', eventRoutes);
+app.route('/', staffRoutes);
+app.route('/', checkinRoutes);
+app.route('/', reportRoutes);
 
 app.notFound(c => apiError(c, 404, 'not_found', '找不到這個 API'));
 app.onError((err, c) => {
@@ -26,6 +41,7 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  // 第 5 階段實作：刪除結束滿 10 天的活動
-  async scheduled(_controller: ScheduledController, _env: Bindings, _ctx: ExecutionContext) {},
+  async scheduled(_controller: ScheduledController, env: Bindings, _ctx: ExecutionContext) {
+    await runRetention(env, Date.now());
+  },
 } satisfies ExportedHandler<Bindings>;
