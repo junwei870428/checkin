@@ -1,0 +1,1618 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>活動報到系統（雛形）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<style>
+:root{
+  --bg:#F3F5F8; --fg:#1B2430; --bar:#1E4A7A;
+  color-scheme: light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --bg:#12161C; --fg:#E6EAF0; --bar:#1A2029; color-scheme:dark; }
+}
+:root[data-theme="dark"]{ --bg:#12161C; --fg:#E6EAF0; --bar:#1A2029; color-scheme:dark; }
+html{ scroll-padding-top:env(safe-area-inset-top,0px); }
+body{ margin:0; background:var(--bg); color:var(--fg);
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; }
+body::before{ content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); z-index:1200; background:var(--bar); }
+#qr-reader{ border:none !important; width:100%; max-width:440px; margin:0 auto; }
+#qr-reader video{ border-radius:10px; }
+#boot{ padding:48px 24px; text-align:center; color:var(--fg); }
+.slip-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+.slip{ border:1px dashed #8a94a3; border-radius:8px; padding:12px; }
+.qr-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+.qr-cell{ text-align:center; padding:10px; border:1px solid rgba(128,128,128,.35); border-radius:8px; background:#fff; color:#1B2430; }
+.qr-cell img, .qr-cell canvas{ margin:0 auto; }
+@media print{
+  body *{ visibility:hidden; }
+  .print-area, .print-area *{ visibility:visible; }
+  .print-area{ position:absolute; left:0; top:0; width:100%; }
+  .no-print{ display:none !important; }
+}
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">載入中…</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mui/material@5.15.20/umd/material-ui.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext } = React;
+const {
+  ThemeProvider, createTheme, CssBaseline, AppBar, Toolbar, Typography, Button, TextField, Tabs, Tab,
+  Box, Container, Paper, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Table, TableHead,
+  TableBody, TableRow, TableCell, TableContainer, IconButton, Icon, Alert, Snackbar, Switch,
+  FormControlLabel, Select, MenuItem, InputLabel, FormControl, LinearProgress, Autocomplete, Stack,
+  Divider, Tooltip, useMediaQuery, ToggleButton, ToggleButtonGroup, CardActionArea
+} = MaterialUI;
+
+/* ---------- 常數與工具 ---------- */
+const STORE_KEY = 'checkin-proto-v1';
+const SESSION_KEY = 'checkin-proto-session';
+const RETAIN_MS = 10 * 864e5;
+const MAX_FAILS = 5;
+const LOCK_MS = 15 * 60e3;
+
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const pad = n => String(n).padStart(2, '0');
+const fmtDT = t => { const d = new Date(t); return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fmtTime = t => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const fmtDate = t => { const d = new Date(t); return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`; };
+const ymd = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`; };
+const toLocalInput = t => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fromLocalInput = s => new Date(s).getTime();
+const genPin = () => String(Math.floor(Math.random() * 1e6)).padStart(6, '0');
+const genPwd = () => { const a = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; let s = ''; for (let i = 0; i < 10; i++) s += a[Math.floor(Math.random() * a.length)]; return s; };
+const clone = o => (typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
+const deviceLabel = () => (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? '手機' : '電腦');
+
+function loadState() { try { const s = localStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function saveState(s) { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {} }
+function loadSession() { try { const s = sessionStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function saveSession(s) { try { s ? sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)) : sessionStorage.removeItem(SESSION_KEY); } catch (e) {} }
+
+const isEnded = ev => !!ev && (ev.closed || Date.now() > ev.end);
+const isNotStarted = ev => Date.now() < ev.start;
+
+/* ---------- 示範資料 ---------- */
+function seed() {
+  const surnames = '陳林黃張李王吳劉蔡楊許鄭謝洪郭'.split('');
+  const givens = ['怡君','志明','雅婷','家豪','淑芬','俊傑','佳穎','冠宇','宜蓁','承翰','美玲','建宏','欣怡','宗翰','詩涵','柏翰','婉婷','信宏','惠雯','育誠'];
+  const plants = ['台中廠','彰化廠','南投廠'];
+  const depts = ['資訊室','人資部','財務部','生產一課','生產二課','品保部','業務部','研發部'];
+  const t = Date.now();
+  const employees = {};
+  for (let i = 0; i < 48; i++) {
+    const empNo = String(1001 + i).padStart(6, '0');
+    employees[empNo] = { empNo, name: surnames[(i * 7) % surnames.length] + givens[(i * 11) % givens.length],
+      dept: depts[(i * 5) % depts.length], plant: plants[i % 3], active: true, updatedAt: t };
+  }
+  employees['001048'].active = false;
+  const users = [
+    { id: 'u1', username: 'admin', password: 'admin2026', role: 'admin', name: '系統管理員', disabled: false },
+    { id: 'u2', username: 'host01', password: 'host2026', role: 'organizer', name: '福委會承辦', disabled: false },
+  ];
+  const endDay = new Date(t + 7 * 864e5); endDay.setHours(22, 0, 0, 0);
+  const ev = { id: 'ev1', name: '2026 公司聖誕晚會', code: 'XMAS', ownerId: 'u2', start: t - 3600e3, end: endDay.getTime(),
+    scope: { type: 'all', values: [] }, closed: false, createdAt: t,
+    stations: [
+      { id: 'st1', name: '入場報到', kind: 'checkin' },
+      { id: 'st2', name: '領取禮品', kind: 'gift', requireCheckin: true },
+    ] };
+  const staff = [1, 2, 3, 4, 5].map(n => ({ id: uid(), eventId: 'ev1', account: `XMAS-${pad(n)}`, pin: genPin(), disabled: false, fails: 0, lockUntil: 0 }));
+  return { version: 1, employees, users, events: [ev], members: {}, staff, scans: [], importLogs: [] };
+}
+
+function purge(db) {
+  const t = Date.now();
+  const gone = db.events.filter(e => e.end + RETAIN_MS < t).map(e => e.id);
+  if (!gone.length) return db;
+  const d = clone(db);
+  d.events = d.events.filter(e => !gone.includes(e.id));
+  d.scans = d.scans.filter(s => !gone.includes(s.eventId));
+  d.staff = d.staff.filter(s => !gone.includes(s.eventId));
+  gone.forEach(id => { delete d.members[id]; });
+  return d;
+}
+
+/* ---------- 名單與檢核 ---------- */
+function inScope(ev, emp, members) {
+  if (!emp) return false;
+  const s = ev.scope;
+  if (s.type === 'all') return true;
+  if (s.type === 'plants') return s.values.includes(emp.plant);
+  if (s.type === 'depts') return s.values.includes(emp.dept);
+  if (s.type === 'list') return (members[ev.id] || []).includes(emp.empNo);
+  return false;
+}
+function scopeEmployees(db, ev) {
+  return Object.values(db.employees).filter(e => e.active && inScope(ev, e, db.members))
+    .sort((a, b) => a.plant.localeCompare(b.plant) || a.dept.localeCompare(b.dept) || a.empNo.localeCompare(b.empNo));
+}
+function stationMaps(db, ev) {
+  const m = {}; ev.stations.forEach(s => { m[s.id] = {}; });
+  db.scans.forEach(s => { if (s.eventId === ev.id && !s.voided && m[s.stationId]) m[s.stationId][s.empNo] = s; });
+  return m;
+}
+function evaluateScan(db, ev, station, code) {
+  const empNo = String(code || '').trim();
+  if (!ev || isEnded(ev)) return { status: 'error', title: '活動已結束', detail: '報到已關閉' };
+  const emp = db.employees[empNo];
+  if (!emp) return { status: 'error', title: '查無此工號', detail: `讀到的內容：${empNo || '（空白）'}` };
+  if (!emp.active) return { status: 'error', title: '此工號已停用', emp };
+  if (!inScope(ev, emp, db.members)) return { status: 'error', title: '不在本活動名單', emp };
+  const prev = db.scans.find(s => s.eventId === ev.id && s.stationId === station.id && s.empNo === empNo && !s.voided);
+  if (prev) return { status: 'dup', emp, prev };
+  if (station.kind === 'gift' && station.requireCheckin) {
+    const ck = ev.stations.find(s => s.kind === 'checkin');
+    if (ck && !db.scans.some(s => s.eventId === ev.id && s.stationId === ck.id && s.empNo === empNo && !s.voided))
+      return { status: 'error', title: '尚未完成入場報到', detail: `請先到「${ck.name}」報到`, emp };
+  }
+  return { status: 'ok', emp };
+}
+
+/* ---------- 提示音 ---------- */
+let actx = null;
+function beep(pattern) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = actx.currentTime;
+    pattern.forEach(([f, d, at]) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + at);
+      g.gain.exponentialRampToValueAtTime(0.3, t0 + at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + d);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t0 + at); o.stop(t0 + at + d + 0.02);
+    });
+  } catch (e) {}
+}
+const SOUNDS = { ok: [[880, 0.15, 0]], dup: [[660, 0.12, 0], [660, 0.12, 0.2]], error: [[220, 0.5, 0]] };
+const VIB = { ok: [80], dup: [80, 80, 80], error: [300] };
+
+/* ---------- Excel ---------- */
+const FIELD_ALIASES = {
+  empNo: ['工號', '員工編號', '員工工號', '員編', '員工代號', 'empno', 'employeeid', 'employeeno'],
+  name: ['姓名', '員工姓名', '名字', '中文姓名', 'name'],
+  dept: ['部門', '部門名稱', '單位', '所屬部門', 'dept', 'department'],
+  plant: ['廠別', '廠區', '廠', '廠名', 'plant', 'site', 'factory'],
+};
+const FIELD_LABEL = { empNo: '工號', name: '姓名', dept: '部門', plant: '廠別' };
+const normHeader = h => String(h || '').replace(/[\s\u3000（）()]/g, '').toLowerCase();
+
+function sheetRows(ws) {
+  const out = [];
+  if (!ws || !ws['!ref']) return out;
+  const R = XLSX.utils.decode_range(ws['!ref']);
+  for (let r = R.s.r; r <= R.e.r; r++) {
+    const row = [], types = [];
+    for (let c = R.s.c; c <= R.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      row.push(cell ? String(cell.w != null ? cell.w : cell.v).trim() : '');
+      types.push(cell ? cell.t : null);
+    }
+    out.push({ r: r + 1, row, types });
+  }
+  return out;
+}
+async function parseExcel(file, required) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = sheetRows(ws).filter(x => x.row.some(v => v !== ''));
+  if (!rows.length) return { error: '檔案裡沒有資料' };
+  const header = rows[0];
+  const map = {};
+  header.row.forEach((h, i) => {
+    const n = normHeader(h);
+    Object.entries(FIELD_ALIASES).forEach(([f, al]) => {
+      if (map[f] === undefined && al.map(normHeader).includes(n)) map[f] = i;
+    });
+  });
+  const missing = required.filter(f => map[f] === undefined);
+  if (missing.length) return { error: `找不到這些欄位：${missing.map(f => FIELD_LABEL[f]).join('、')}`, headers: header.row.filter(Boolean) };
+  let numericEmpNo = 0;
+  const data = rows.slice(1).map(x => {
+    if (x.types[map.empNo] === 'n') numericEmpNo++;
+    const o = { r: x.r };
+    Object.keys(map).forEach(f => { o[f] = x.row[map[f]] || ''; });
+    return o;
+  });
+  return { rows: data, numericEmpNo, sheet: wb.SheetNames[0] };
+}
+
+let downloadsP = null;
+function getDownloads() {
+  if (!downloadsP) {
+    downloadsP = (window.claude && typeof window.claude.use === 'function')
+      ? window.claude.use('downloads').catch(() => null)
+      : Promise.resolve(null);
+  }
+  return downloadsP;
+}
+async function saveFile(filename, buf, notify) {
+  const d = await getDownloads();
+  if (d) {
+    try { await d.save({ filename, data: buf }); notify('檔案已下載', 'success'); }
+    catch (e) { if (e && e.code === 'declined') return; notify('無法下載檔案：' + ((e && (e.message || e.code)) || ''), 'error'); }
+    return;
+  }
+  try {
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { notify('這個檢視無法下載檔案', 'error'); }
+}
+function safeSheetName(name, used) {
+  let n = String(name).replace(/[\[\]\*\?\/\\:]/g, '').slice(0, 28) || '工作表';
+  let k = n, i = 2;
+  while (used.has(k)) k = `${n}${i++}`;
+  used.add(k); return k;
+}
+function templateBuffer() {
+  const ws = XLSX.utils.aoa_to_sheet([['部門', '工號', '廠別', '姓名'], ['資訊室', '001234', '台中廠', '王小明']]);
+  ws['B2'] = { t: 's', v: '001234', z: '@' };
+  ws['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 12 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '員工資料');
+  return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+function exportEventBuffer(db, ev) {
+  const emps = scopeEmployees(db, ev);
+  const maps = stationMaps(db, ev);
+  const wb = XLSX.utils.book_new();
+  const used = new Set();
+  // 統計
+  const groups = {};
+  emps.forEach(e => { const k = e.plant + '\u0000' + e.dept; (groups[k] = groups[k] || { plant: e.plant, dept: e.dept, list: [] }).list.push(e); });
+  const sum = [['廠別', '部門', '應到', ...ev.stations.flatMap(s => [s.name, s.name + '比例'])]];
+  Object.values(groups).forEach(g => {
+    sum.push([g.plant, g.dept, g.list.length, ...ev.stations.flatMap(s => {
+      const c = g.list.filter(e => maps[s.id][e.empNo]).length;
+      return [c, g.list.length ? Math.round(c / g.list.length * 100) + '%' : ''];
+    })]);
+  });
+  sum.push(['合計', '', emps.length, ...ev.stations.flatMap(s => {
+    const c = emps.filter(e => maps[s.id][e.empNo]).length;
+    return [c, emps.length ? Math.round(c / emps.length * 100) + '%' : ''];
+  })]);
+  const ws0 = XLSX.utils.aoa_to_sheet(sum);
+  XLSX.utils.book_append_sheet(wb, ws0, safeSheetName('統計', used));
+  ev.stations.forEach(stn => {
+    const rows = [['廠別', '部門', '工號', '姓名', '狀態', '時間', '處理帳號', '手動處理']];
+    emps.forEach(e => {
+      const s = maps[stn.id][e.empNo];
+      rows.push([e.plant, e.dept, e.empNo, e.name, s ? '已通過' : '未通過', s ? fmtDT(s.time) : '', s ? s.by : '', s && s.manual ? '是' : '']);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, safeSheetName(stn.name, used));
+  });
+  return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+
+/* ---------- 主題 ---------- */
+function makeTheme(mode) {
+  const dark = mode === 'dark';
+  return createTheme({
+    palette: {
+      mode,
+      primary: { main: dark ? '#8DB4E2' : '#1E4A7A' },
+      secondary: { main: dark ? '#E0B25C' : '#A8761E' },
+      success: { main: dark ? '#5CC27A' : '#1B7F3B' },
+      background: dark ? { default: '#12161C', paper: '#1A2029' } : { default: '#F3F5F8', paper: '#FFFFFF' },
+    },
+    typography: {
+      fontFamily: '"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif',
+      button: { textTransform: 'none', fontWeight: 600 },
+    },
+    shape: { borderRadius: 10 },
+    components: {
+      MuiPaper: { defaultProps: { elevation: 0 } },
+      MuiTableCell: { styleOverrides: { head: { fontWeight: 700, whiteSpace: 'nowrap' } } },
+    },
+  });
+}
+
+const NotifyCtx = createContext(() => {});
+
+/* ---------- 共用元件 ---------- */
+function ConfirmDialog({ open, title, body, confirmText, danger, onClose, onConfirm }) {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>{title}</DialogTitle>
+      <DialogContent><Typography>{body}</Typography></DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>取消</Button>
+        <Button variant="contained" color={danger ? 'error' : 'primary'} onClick={() => { onConfirm(); onClose(); }}>{confirmText}</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+function EventStatusChip({ ev }) {
+  if (isEnded(ev)) return <Chip size="small" label="已結束" />;
+  if (isNotStarted(ev)) return <Chip size="small" color="info" variant="outlined" label="尚未開始" />;
+  return <Chip size="small" color="success" label="進行中" />;
+}
+function QRBox({ text, size = 120 }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current || !window.QRCode) return;
+    ref.current.innerHTML = '';
+    new QRCode(ref.current, { text, width: size, height: size, correctLevel: QRCode.CorrectLevel.M });
+  }, [text, size]);
+  return <div ref={ref} style={{ display: 'flex', justifyContent: 'center' }} />;
+}
+
+/* ---------- 登入 ---------- */
+function LoginPage({ db, update, onLogin }) {
+  const notify = useContext(NotifyCtx);
+  const [tab, setTab] = useState(0);
+  const [acc, setAcc] = useState('');
+  const [pin, setPin] = useState('');
+  const [user, setUser] = useState('');
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [resetOpen, setResetOpen] = useState(false);
+
+  const staffLogin = e => {
+    e.preventDefault(); setErr('');
+    const a = acc.trim().toUpperCase();
+    const st = db.staff.find(s => s.account.toUpperCase() === a);
+    if (!st) { setErr('帳號或 PIN 碼錯誤'); return; }
+    const ev = db.events.find(x => x.id === st.eventId);
+    const t = Date.now();
+    if (st.lockUntil > t) { setErr(`此帳號已鎖定，請於 ${fmtTime(st.lockUntil)} 後再試，或請承辦人解鎖`); return; }
+    if (st.disabled) { setErr('此帳號已停用，請洽活動承辦人'); return; }
+    if (!ev || isEnded(ev)) { setErr('活動已結束，報到帳號已失效'); return; }
+    if (pin.trim() !== st.pin) {
+      let left = 0;
+      update(d => {
+        const s = d.staff.find(x => x.id === st.id);
+        s.fails = (s.fails || 0) + 1;
+        if (s.fails >= MAX_FAILS) { s.lockUntil = t + LOCK_MS; s.fails = 0; left = 0; } else left = MAX_FAILS - s.fails;
+        return d;
+      });
+      setErr(left === 0 ? '輸入錯誤次數過多，帳號已鎖定 15 分鐘' : `帳號或 PIN 碼錯誤，還可以再試 ${left} 次`);
+      return;
+    }
+    update(d => { d.staff.find(x => x.id === st.id).fails = 0; return d; });
+    onLogin({ type: 'staff', staffId: st.id, eventId: ev.id, stationId: ev.stations.length === 1 ? ev.stations[0].id : null });
+  };
+  const adminLogin = e => {
+    e.preventDefault(); setErr('');
+    const u = db.users.find(x => x.username === user.trim() && x.password === pw);
+    if (!u) { setErr('帳號或密碼錯誤'); return; }
+    if (u.disabled) { setErr('此帳號已停用'); return; }
+    onLogin({ type: 'admin', userId: u.id });
+  };
+  const demoEvent = db.events.find(e => !isEnded(e));
+  const demoStaff = demoEvent ? db.staff.filter(s => s.eventId === demoEvent.id && !s.disabled).slice(0, 3) : [];
+
+  return (
+    <Container maxWidth="sm" sx={{ py: { xs: 3, sm: 6 } }}>
+      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 3 }}>
+        <Box sx={{ width: 48, height: 48, borderRadius: 2, bgcolor: 'primary.main', color: 'primary.contrastText', display: 'grid', placeItems: 'center' }}>
+          <Icon>qr_code_scanner</Icon>
+        </Box>
+        <Box>
+          <Typography variant="h5" fontWeight={700}>活動報到系統</Typography>
+          <Typography variant="body2" color="text.secondary">春酒、聖誕晚會等公司活動的報到與領取管理</Typography>
+        </Box>
+      </Stack>
+
+      <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
+        <Tabs value={tab} onChange={(e, v) => { setTab(v); setErr(''); }} variant="fullWidth">
+          <Tab icon={<Icon>badge</Icon>} iconPosition="start" label="報到人員" />
+          <Tab icon={<Icon>admin_panel_settings</Icon>} iconPosition="start" label="管理後台" />
+        </Tabs>
+        <Divider />
+        <Box sx={{ p: 3 }}>
+          {tab === 0 ? (
+            <form onSubmit={staffLogin}>
+              <Stack spacing={2}>
+                <TextField label="報到帳號" value={acc} onChange={e => setAcc(e.target.value)} placeholder="例如 XMAS-01" autoComplete="off" inputProps={{ autoCapitalize: 'characters' }} />
+                <TextField label="PIN 碼" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} type="password" inputProps={{ inputMode: 'numeric' }} />
+                {err && <Alert severity="error">{err}</Alert>}
+                <Button type="submit" variant="contained" size="large" disabled={!acc || !pin}>登入報到</Button>
+              </Stack>
+            </form>
+          ) : (
+            <form onSubmit={adminLogin}>
+              <Stack spacing={2}>
+                <TextField label="帳號" value={user} onChange={e => setUser(e.target.value)} autoComplete="username" />
+                <TextField label="密碼" value={pw} onChange={e => setPw(e.target.value)} type="password" autoComplete="current-password" />
+                {err && <Alert severity="error">{err}</Alert>}
+                <Button type="submit" variant="contained" size="large" disabled={!user || !pw}>登入後台</Button>
+              </Stack>
+            </form>
+          )}
+        </Box>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ mt: 3, p: 2.5, borderStyle: 'dashed' }}>
+        <Typography fontWeight={700} sx={{ mb: 1 }}>雛形試用說明</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          資料只存在這台裝置的瀏覽器裡，可以開兩個分頁，一個登入後台看即時人數，一個登入報到畫面試掃。
+        </Typography>
+        <Table size="small">
+          <TableBody>
+            <TableRow><TableCell>系統管理員</TableCell><TableCell>admin</TableCell><TableCell>admin2026</TableCell></TableRow>
+            <TableRow><TableCell>活動承辦人</TableCell><TableCell>host01</TableCell><TableCell>host2026</TableCell></TableRow>
+            {demoStaff.map(s => (
+              <TableRow key={s.id}><TableCell>報到人員</TableCell><TableCell>{s.account}</TableCell><TableCell>{s.pin}</TableCell></TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+          測試用的員工 QR code 可在後台「員工資料」裡開啟。示範工號為 001001 到 001048，其中 001048 是停用狀態。
+        </Typography>
+        <Button size="small" color="inherit" startIcon={<Icon>restart_alt</Icon>} sx={{ mt: 1 }} onClick={() => setResetOpen(true)}>重設示範資料</Button>
+      </Paper>
+      <ConfirmDialog open={resetOpen} title="重設示範資料？" body="所有員工、活動、帳號與掃描紀錄都會回到初始狀態，報到人員的 PIN 碼也會重新產生。"
+        confirmText="重設" danger onClose={() => setResetOpen(false)} onConfirm={() => { update(() => seed()); notify('已重設示範資料', 'success'); }} />
+    </Container>
+  );
+}
+
+/* ---------- 報到端 ---------- */
+function StaffApp({ db, update, session, setSession }) {
+  const st = db.staff.find(s => s.id === session.staffId);
+  const ev = db.events.find(e => e.id === session.eventId);
+  if (!st || !ev) return null;
+  const station = ev.stations.find(s => s.id === session.stationId);
+  if (!station) return <StationPicker ev={ev} st={st} onPick={id => setSession({ ...session, stationId: id })} onLogout={() => setSession(null)} />;
+  return <ScanScreen db={db} update={update} ev={ev} st={st} station={station}
+    onSwitch={() => setSession({ ...session, stationId: null })} onLogout={() => setSession(null)} />;
+}
+
+function StationPicker({ ev, st, onPick, onLogout }) {
+  return (
+    <Container maxWidth="sm" sx={{ py: 4 }}>
+      <Typography variant="body2" color="text.secondary">{ev.name}｜{st.account}</Typography>
+      <Typography variant="h5" fontWeight={700} sx={{ mt: .5, mb: 3 }}>選擇你負責的關卡</Typography>
+      <Stack spacing={1.5}>
+        {ev.stations.map(s => (
+          <Paper key={s.id} variant="outlined">
+            <CardActionArea onClick={() => onPick(s.id)} sx={{ p: 2.5 }}>
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Icon color="primary" sx={{ fontSize: 36 }}>{s.kind === 'checkin' ? 'how_to_reg' : 'redeem'}</Icon>
+                <Box>
+                  <Typography variant="h6">{s.name}</Typography>
+                  {s.kind === 'gift' && s.requireCheckin && <Typography variant="body2" color="text.secondary">需先完成入場報到才能通過</Typography>}
+                </Box>
+              </Stack>
+            </CardActionArea>
+          </Paper>
+        ))}
+      </Stack>
+      <Button sx={{ mt: 3 }} color="inherit" startIcon={<Icon>logout</Icon>} onClick={onLogout}>登出</Button>
+    </Container>
+  );
+}
+
+function ResultOverlay({ res, station, onClose }) {
+  const cfg = {
+    ok: { bg: '#1B7F3B', fg: '#FFFFFF', icon: 'check_circle' },
+    dup: { bg: '#F2A900', fg: '#1F1600', icon: 'error' },
+    error: { bg: '#C62828', fg: '#FFFFFF', icon: 'cancel' },
+  }[res.status];
+  const title = res.status === 'ok' ? `${station.name}完成` : res.status === 'dup' ? `此人已${station.name}` : res.title;
+  return (
+    <Box onClick={onClose} role="alert" sx={{
+      position: 'fixed', inset: 0, zIndex: 1500, bgcolor: cfg.bg, color: cfg.fg, cursor: 'pointer',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+      px: 3, pt: 'calc(24px + env(safe-area-inset-top, 0px))', pb: 'calc(24px + env(safe-area-inset-bottom, 0px))',
+    }}>
+      <Icon sx={{ fontSize: { xs: 96, sm: 128 } }}>{cfg.icon}</Icon>
+      <Typography sx={{ fontSize: { xs: 28, sm: 40 }, fontWeight: 700, mt: 1 }}>{title}</Typography>
+      {res.emp && <Typography sx={{ fontSize: { xs: 46, sm: 68 }, fontWeight: 700, mt: 2, lineHeight: 1.15 }}>{res.emp.name}</Typography>}
+      {res.emp && <Typography sx={{ fontSize: { xs: 18, sm: 24 }, mt: 1, opacity: .9 }}>{res.emp.dept}｜{res.emp.plant}｜{res.emp.empNo}</Typography>}
+      {res.status === 'dup' && res.prev && <Typography sx={{ fontSize: 20, mt: 2 }}>{fmtDT(res.prev.time)} 由 {res.prev.by} 處理</Typography>}
+      {res.detail && <Typography sx={{ fontSize: 20, mt: 2 }}>{res.detail}</Typography>}
+      {res.manual && <Chip label="手動處理" sx={{ mt: 2, bgcolor: 'rgba(255,255,255,.25)', color: 'inherit' }} />}
+      <Typography sx={{ fontSize: 14, mt: 4, opacity: .8 }}>點一下畫面繼續</Typography>
+    </Box>
+  );
+}
+
+function ScannerPanel({ onCode }) {
+  const ref = useRef(null);
+  const [v, setV] = useState('');
+  const [focused, setFocused] = useState(true);
+  useEffect(() => { const t = setTimeout(() => ref.current && ref.current.focus(), 80); return () => clearTimeout(t); }, []);
+  return (
+    <Paper variant="outlined" sx={{ p: 3, textAlign: 'center' }}>
+      <Icon sx={{ fontSize: 56, color: 'primary.main' }}>qr_code_scanner</Icon>
+      <Typography variant="h6">請用掃描槍掃描識別證</Typography>
+      <Typography variant="body2" color="text.secondary">游標要停在下方欄位，掃描後會自動送出</Typography>
+      <TextField inputRef={ref} value={v} fullWidth sx={{ mt: 2 }} placeholder="等待掃描…"
+        onChange={e => setV(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const c = v.trim(); setV(''); if (c) onCode(c); } }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setFocused(false); setTimeout(() => { if (ref.current && (document.activeElement === document.body || !document.activeElement)) ref.current.focus(); }, 250); }}
+        inputProps={{ autoComplete: 'off', style: { fontSize: 26, textAlign: 'center', letterSpacing: 2 } }} />
+      {!focused && (
+        <Alert severity="warning" sx={{ mt: 2, textAlign: 'left' }}
+          action={<Button color="inherit" size="small" onClick={() => ref.current && ref.current.focus()}>恢復</Button>}>
+          欄位目前不在輸入狀態，這時掃描不會有反應
+        </Alert>
+      )}
+    </Paper>
+  );
+}
+
+function CameraPanel({ onCode }) {
+  const [err, setErr] = useState('');
+  const cb = useRef(onCode); cb.current = onCode;
+  const last = useRef({ c: '', t: 0 });
+  useEffect(() => {
+    if (!window.Html5Qrcode) { setErr('掃描元件載入失敗'); return; }
+    let alive = true;
+    const q = new Html5Qrcode('qr-reader', { verbose: false });
+    const startP = q.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: (w, h) => { const s = Math.max(150, Math.floor(Math.min(w, h) * 0.7)); return { width: s, height: s }; } },
+      text => {
+        const t = Date.now();
+        if (text === last.current.c && t - last.current.t < 3000) return;
+        last.current = { c: text, t };
+        cb.current(text);
+      },
+      () => {}
+    ).catch(e => { if (alive) setErr(String((e && e.message) || e)); throw e; });
+    return () => {
+      alive = false;
+      startP.then(() => q.stop()).then(() => q.clear()).catch(() => { try { q.clear(); } catch (_) {} });
+    };
+  }, []);
+  return (
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <div id="qr-reader" />
+      {err ? (
+        <Alert severity="error" sx={{ mt: 1 }}>
+          <Typography fontWeight={700}>無法開啟相機</Typography>
+          <Typography variant="body2">請確認瀏覽器已允許使用相機。如果是在 Claude 對話裡預覽，相機可能會被擋下，請改用手機瀏覽器直接開啟這個頁面的連結。</Typography>
+          <Typography variant="caption" sx={{ display: 'block', mt: .5, opacity: .8 }}>{err}</Typography>
+        </Alert>
+      ) : (
+        <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ mt: 1 }}>把識別證或電子 QR code 對準框內</Typography>
+      )}
+    </Paper>
+  );
+}
+
+function ManualPanel({ employees, onCode }) {
+  const [val, setVal] = useState(null);
+  return (
+    <Paper variant="outlined" sx={{ p: 3 }}>
+      <Typography variant="h6">手動查詢</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>沒有識別證也沒有電子 QR code 時，用姓名或工號找人</Typography>
+      <Autocomplete options={employees} value={val} onChange={(e, v) => setVal(v)}
+        getOptionLabel={o => `${o.name} ${o.empNo}`} isOptionEqualToValue={(a, b) => a.empNo === b.empNo}
+        renderOption={(props, o) => {
+          const { key, ...rest } = props;
+          return (
+            <li key={o.empNo} {...rest}>
+              <Box>
+                <Typography>{o.name}<Typography component="span" color="text.secondary" sx={{ ml: 1 }}>{o.empNo}</Typography></Typography>
+                <Typography variant="body2" color="text.secondary">{o.dept}｜{o.plant}</Typography>
+              </Box>
+            </li>
+          );
+        }}
+        renderInput={p => <TextField {...p} label="姓名或工號" />} noOptionsText="找不到符合的人員" />
+      <Button variant="contained" size="large" fullWidth sx={{ mt: 2 }} disabled={!val}
+        onClick={() => { onCode(val.empNo, true); setVal(null); }}>確認通過</Button>
+    </Paper>
+  );
+}
+
+function ScanScreen({ db, update, ev, st, station, onSwitch, onLogout }) {
+  const narrow = useMediaQuery('(max-width:700px)');
+  const mobileUA = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  const [mode, setMode] = useState(narrow || mobileUA ? 'camera' : 'scanner');
+  const [overlay, setOverlay] = useState(null);
+  const [log, setLog] = useState([]);
+  const [undo, setUndo] = useState(null);
+  const dbRef = useRef(db); dbRef.current = db;
+  const timer = useRef(null);
+  const notify = useContext(NotifyCtx);
+
+  const scope = useMemo(() => scopeEmployees(db, ev), [db.employees, db.members, ev]);
+  const passed = db.scans.filter(s => s.eventId === ev.id && s.stationId === station.id && !s.voided).length;
+
+  const handle = useCallback((code, manual = false) => {
+    const cur = dbRef.current;
+    const e = cur.events.find(x => x.id === ev.id);
+    const stn = e ? e.stations.find(s => s.id === station.id) || station : station;
+    const r = evaluateScan(cur, e, stn, code);
+    let scanId = null;
+    if (r.status === 'ok') {
+      const scan = { id: uid(), eventId: ev.id, stationId: station.id, empNo: r.emp.empNo, time: Date.now(), by: st.account, device: deviceLabel(), manual, voided: false };
+      scanId = scan.id;
+      update(d => { d.scans.push(scan); return d; });
+    }
+    const res = { ...r, code: String(code || '').trim(), scanId, time: Date.now(), manual, key: uid() };
+    beep(SOUNDS[r.status]);
+    try { navigator.vibrate && navigator.vibrate(VIB[r.status]); } catch (_) {}
+    setOverlay(res);
+    setLog(l => [res, ...l].slice(0, 12));
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setOverlay(null), r.status === 'ok' ? 1600 : 2600);
+  }, [ev.id, station, st.account, update]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const voidScan = item => {
+    update(d => {
+      const s = d.scans.find(x => x.id === item.scanId);
+      if (s) { s.voided = true; s.voidedBy = st.account; s.voidedAt = Date.now(); }
+      return d;
+    });
+    notify(`已撤銷 ${item.emp.name} 的${station.name}`, 'info');
+  };
+  const isVoided = id => { const s = db.scans.find(x => x.id === id); return !s || s.voided; };
+  const pct = scope.length ? Math.round(passed / scope.length * 100) : 0;
+
+  return (
+    <Box sx={{ minHeight: '100%' }}>
+      <AppBar position="sticky" sx={{ top: 'env(safe-area-inset-top, 0px)' }}>
+        <Toolbar sx={{ gap: 1 }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="caption" sx={{ opacity: .85, display: 'block' }} noWrap>{ev.name}</Typography>
+            <Typography variant="h6" fontWeight={700} noWrap>{station.name}</Typography>
+          </Box>
+          <Chip size="small" label={st.account} sx={{ bgcolor: 'rgba(255,255,255,.18)', color: 'inherit' }} />
+          {ev.stations.length > 1 && <Tooltip title="切換關卡"><IconButton color="inherit" onClick={onSwitch}><Icon>swap_horiz</Icon></IconButton></Tooltip>}
+          <Tooltip title="登出"><IconButton color="inherit" onClick={onLogout}><Icon>logout</Icon></IconButton></Tooltip>
+        </Toolbar>
+      </AppBar>
+
+      <Container maxWidth="sm" sx={{ py: 2 }}>
+        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+          <Stack direction="row" alignItems="baseline" justifyContent="space-between">
+            <Typography color="text.secondary">已通過</Typography>
+            <Typography><Box component="span" sx={{ fontSize: 30, fontWeight: 700 }}>{passed}</Box><Box component="span" sx={{ color: 'text.secondary' }}> / {scope.length} 人</Box></Typography>
+          </Stack>
+          <LinearProgress variant="determinate" value={pct} sx={{ mt: 1, height: 8, borderRadius: 4 }} />
+        </Paper>
+
+        <ToggleButtonGroup exclusive fullWidth value={mode} onChange={(e, v) => v && setMode(v)} sx={{ mb: 2 }} color="primary">
+          <ToggleButton value="scanner"><Icon sx={{ mr: 1 }}>keyboard</Icon>掃描槍</ToggleButton>
+          <ToggleButton value="camera"><Icon sx={{ mr: 1 }}>photo_camera</Icon>相機</ToggleButton>
+          <ToggleButton value="manual"><Icon sx={{ mr: 1 }}>person_search</Icon>手動</ToggleButton>
+        </ToggleButtonGroup>
+
+        {mode === 'scanner' && <ScannerPanel onCode={handle} />}
+        {mode === 'camera' && <CameraPanel onCode={handle} />}
+        {mode === 'manual' && <ManualPanel employees={scope} onCode={handle} />}
+
+        <Typography fontWeight={700} sx={{ mt: 3, mb: 1 }}>這台裝置最近的紀錄</Typography>
+        {log.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">還沒有掃描紀錄。掃到的結果會列在這裡，掃錯人可以撤銷。</Typography>
+        ) : (
+          <Paper variant="outlined">
+            {log.map((r, i) => {
+              const color = r.status === 'ok' ? 'success.main' : r.status === 'dup' ? 'warning.main' : 'error.main';
+              const label = r.status === 'ok' ? '通過' : r.status === 'dup' ? '重複' : r.title;
+              const voided = r.status === 'ok' && isVoided(r.scanId);
+              return (
+                <Box key={r.key}>
+                  {i > 0 && <Divider />}
+                  <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1.25 }}>
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: color, flexShrink: 0 }} />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography noWrap sx={{ textDecoration: voided ? 'line-through' : 'none' }}>
+                        {r.emp ? `${r.emp.name}（${r.emp.empNo}）` : r.code}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">{fmtTime(r.time)}｜{voided ? '已撤銷' : label}{r.manual ? '｜手動' : ''}</Typography>
+                    </Box>
+                    {r.status === 'ok' && !voided && <Button size="small" color="inherit" onClick={() => setUndo(r)}>撤銷</Button>}
+                  </Stack>
+                </Box>
+              );
+            })}
+          </Paper>
+        )}
+      </Container>
+
+      {overlay && <ResultOverlay res={overlay} station={station} onClose={() => { clearTimeout(timer.current); setOverlay(null); }} />}
+      <ConfirmDialog open={!!undo} title="撤銷這筆紀錄？" danger confirmText="撤銷"
+        body={undo ? `撤銷 ${undo.emp.name} 的${station.name}紀錄後，可以重新掃描。撤銷會留下紀錄。` : ''}
+        onClose={() => setUndo(null)} onConfirm={() => voidScan(undo)} />
+    </Box>
+  );
+}
+
+/* ---------- 管理後台 ---------- */
+function AdminApp({ db, update, session, setSession }) {
+  const user = db.users.find(u => u.id === session.userId);
+  const [tab, setTab] = useState('events');
+  const [evId, setEvId] = useState(null);
+  if (!user) return null;
+  const isAdmin = user.role === 'admin';
+  const ev = evId && db.events.find(e => e.id === evId);
+
+  return (
+    <Box>
+      <AppBar position="sticky" sx={{ top: 'env(safe-area-inset-top, 0px)' }}>
+        <Toolbar sx={{ gap: 1.5 }}>
+          <Icon>qr_code_scanner</Icon>
+          <Typography variant="h6" fontWeight={700} sx={{ flex: 1 }} noWrap>活動報到系統</Typography>
+          <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' } }}>{user.name}</Typography>
+          <Chip size="small" label={isAdmin ? '系統管理員' : '活動承辦人'} sx={{ bgcolor: 'rgba(255,255,255,.18)', color: 'inherit' }} />
+          <Tooltip title="登出"><IconButton color="inherit" onClick={() => setSession(null)}><Icon>logout</Icon></IconButton></Tooltip>
+        </Toolbar>
+        {isAdmin && (
+          <Tabs value={tab} onChange={(e, v) => { setTab(v); setEvId(null); }} textColor="inherit"
+            TabIndicatorProps={{ style: { backgroundColor: 'currentColor', height: 3 } }} variant="scrollable" sx={{ px: 1 }}>
+            <Tab value="events" label="活動" />
+            <Tab value="employees" label="員工資料" />
+            <Tab value="accounts" label="系統帳號" />
+          </Tabs>
+        )}
+      </AppBar>
+      <Container maxWidth="lg" sx={{ py: 3 }}>
+        {tab === 'events' && (ev
+          ? <EventDetail db={db} update={update} ev={ev} user={user} onBack={() => setEvId(null)} />
+          : <EventsList db={db} update={update} user={user} openEvent={setEvId} />)}
+        {tab === 'employees' && isAdmin && <EmployeesTab db={db} update={update} user={user} />}
+        {tab === 'accounts' && isAdmin && <AccountsTab db={db} update={update} user={user} />}
+      </Container>
+    </Box>
+  );
+}
+
+function EventsList({ db, update, user, openEvent }) {
+  const notify = useContext(NotifyCtx);
+  const evs = db.events.filter(e => user.role === 'admin' || e.ownerId === user.id).sort((a, b) => b.start - a.start);
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState(null);
+  const startCreate = () => {
+    const s = new Date(); s.setMinutes(0, 0, 0); s.setHours(s.getHours() + 1);
+    setF({ name: '', code: '', start: toLocalInput(s.getTime()), end: toLocalInput(s.getTime() + 4 * 3600e3) });
+    setOpen(true);
+  };
+  const codeTaken = f && db.events.some(e => e.code.toUpperCase() === f.code.toUpperCase());
+  const valid = f && f.name.trim() && /^[A-Z0-9]{2,8}$/.test(f.code) && !codeTaken && fromLocalInput(f.end) > fromLocalInput(f.start);
+  const create = () => {
+    const id = uid();
+    update(d => {
+      d.events.push({ id, name: f.name.trim(), code: f.code, ownerId: user.id, start: fromLocalInput(f.start), end: fromLocalInput(f.end),
+        scope: { type: 'all', values: [] }, closed: false, createdAt: Date.now(),
+        stations: [{ id: uid(), name: '入場報到', kind: 'checkin' }, { id: uid(), name: '領取禮品', kind: 'gift', requireCheckin: true }] });
+      return d;
+    });
+    setOpen(false); notify('已建立活動', 'success'); openEvent(id);
+  };
+
+  return (
+    <>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+        <Typography variant="h5" fontWeight={700}>活動</Typography>
+        <Button variant="contained" startIcon={<Icon>add</Icon>} onClick={startCreate}>建立活動</Button>
+      </Stack>
+      {evs.length === 0 && (
+        <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
+          <Typography>還沒有活動。建立第一場活動後，再設定參加範圍、關卡和報到人員帳號。</Typography>
+        </Paper>
+      )}
+      <Stack spacing={1.5}>
+        {evs.map(e => {
+          const maps = stationMaps(db, e);
+          const total = scopeEmployees(db, e).length;
+          return (
+            <Paper key={e.id} variant="outlined">
+              <CardActionArea onClick={() => openEvent(e.id)} sx={{ p: 2.5 }}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+                  <Box>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="h6" fontWeight={700}>{e.name}</Typography>
+                      <EventStatusChip ev={e} />
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">{fmtDT(e.start)} 到 {fmtDT(e.end)}｜帳號代碼 {e.code}</Typography>
+                    {isEnded(e) && <Typography variant="body2" color="warning.main" sx={{ mt: .5 }}>資料將於 {fmtDate(e.end + RETAIN_MS)} 自動刪除</Typography>}
+                  </Box>
+                  <Stack direction="row" spacing={3}>
+                    {e.stations.map(s => (
+                      <Box key={s.id} sx={{ textAlign: { sm: 'right' } }}>
+                        <Typography variant="body2" color="text.secondary">{s.name}</Typography>
+                        <Typography fontWeight={700}>{Object.keys(maps[s.id]).length} / {total}</Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Stack>
+              </CardActionArea>
+            </Paper>
+          );
+        })}
+      </Stack>
+
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>建立活動</DialogTitle>
+        {f && (
+          <DialogContent>
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <TextField label="活動名稱" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="例如 2027 春酒" />
+              <TextField label="帳號代碼" value={f.code} onChange={e => setF({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) })}
+                error={!!codeTaken} helperText={codeTaken ? '這個代碼已被其他活動使用' : '2 到 8 碼英數字，報到人員帳號會以它開頭，例如 SPRING-01'} />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField label="開始時間" type="datetime-local" fullWidth InputLabelProps={{ shrink: true }} value={f.start} onChange={e => setF({ ...f, start: e.target.value })} />
+                <TextField label="結束時間" type="datetime-local" fullWidth InputLabelProps={{ shrink: true }} value={f.end} onChange={e => setF({ ...f, end: e.target.value })}
+                  helperText="時間一到，報到會關閉，報到人員帳號也會失效" />
+              </Stack>
+              <Alert severity="info">建立後預設有「入場報到」和「領取禮品」兩個關卡，參加範圍為全公司，可以在活動設定裡修改。</Alert>
+            </Stack>
+          </DialogContent>
+        )}
+        <DialogActions>
+          <Button onClick={() => setOpen(false)}>取消</Button>
+          <Button variant="contained" disabled={!valid} onClick={create}>建立活動</Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
+function EventDetail({ db, update, ev, user, onBack }) {
+  const [tab, setTab] = useState('overview');
+  return (
+    <>
+      <Button color="inherit" startIcon={<Icon>arrow_back</Icon>} onClick={onBack} sx={{ mb: 1 }}>所有活動</Button>
+      <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ mb: 1 }}>
+        <Typography variant="h5" fontWeight={700}>{ev.name}</Typography>
+        <EventStatusChip ev={ev} />
+      </Stack>
+      <Typography variant="body2" color="text.secondary">{fmtDT(ev.start)} 到 {fmtDT(ev.end)}</Typography>
+      {isEnded(ev) && (
+        <Alert severity="warning" sx={{ mt: 2 }}>活動已結束，報到人員帳號已失效。資料將於 {fmtDate(ev.end + RETAIN_MS)} 自動刪除，需要的話請先匯出報表。</Alert>
+      )}
+      <Tabs value={tab} onChange={(e, v) => setTab(v)} variant="scrollable" sx={{ mt: 2, mb: 3, borderBottom: 1, borderColor: 'divider' }}>
+        <Tab value="overview" label="即時概況" />
+        <Tab value="roster" label="名單與報表" />
+        <Tab value="staff" label="報到人員帳號" />
+        <Tab value="settings" label="活動設定" />
+      </Tabs>
+      {tab === 'overview' && <Overview db={db} ev={ev} />}
+      {tab === 'roster' && <Roster db={db} ev={ev} />}
+      {tab === 'staff' && <StaffAccounts db={db} update={update} ev={ev} />}
+      {tab === 'settings' && <EventSettings db={db} update={update} ev={ev} onDeleted={onBack} />}
+    </>
+  );
+}
+
+function Overview({ db, ev }) {
+  const emps = scopeEmployees(db, ev);
+  const maps = stationMaps(db, ev);
+  const groups = [];
+  const idx = {};
+  emps.forEach(e => {
+    const k = e.plant + '\u0000' + e.dept;
+    if (!idx[k]) { idx[k] = { plant: e.plant, dept: e.dept, list: [] }; groups.push(idx[k]); }
+    idx[k].list.push(e);
+  });
+  const plants = [...new Set(groups.map(g => g.plant))];
+  const cellFor = (list, s) => {
+    const c = list.filter(e => maps[s.id][e.empNo]).length;
+    return `${c}（${list.length ? Math.round(c / list.length * 100) : 0}%）`;
+  };
+  return (
+    <>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(auto-fill, minmax(260px, 1fr))' }, gap: 2, mb: 3 }}>
+        {ev.stations.map(s => {
+          const c = Object.keys(maps[s.id]).length;
+          const pct = emps.length ? Math.round(c / emps.length * 100) : 0;
+          return (
+            <Paper key={s.id} variant="outlined" sx={{ p: 2.5 }}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Icon color="primary">{s.kind === 'checkin' ? 'how_to_reg' : 'redeem'}</Icon>
+                <Typography fontWeight={700}>{s.name}</Typography>
+              </Stack>
+              <Typography sx={{ mt: 1 }}>
+                <Box component="span" sx={{ fontSize: 36, fontWeight: 700 }}>{c}</Box>
+                <Box component="span" sx={{ color: 'text.secondary' }}> / {emps.length} 人，{pct}%</Box>
+              </Typography>
+              <LinearProgress variant="determinate" value={pct} sx={{ mt: 1, height: 8, borderRadius: 4 }} />
+            </Paper>
+          );
+        })}
+      </Box>
+      <Typography fontWeight={700} sx={{ mb: 1 }}>依廠別與部門</Typography>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>廠別</TableCell><TableCell>部門</TableCell><TableCell align="right">應到</TableCell>
+              {ev.stations.map(s => <TableCell key={s.id} align="right">{s.name}</TableCell>)}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {plants.map(p => {
+              const gs = groups.filter(g => g.plant === p);
+              const all = gs.flatMap(g => g.list);
+              return (
+                <React.Fragment key={p}>
+                  {gs.map(g => (
+                    <TableRow key={p + g.dept}>
+                      <TableCell>{p}</TableCell><TableCell>{g.dept}</TableCell><TableCell align="right">{g.list.length}</TableCell>
+                      {ev.stations.map(s => <TableCell key={s.id} align="right">{cellFor(g.list, s)}</TableCell>)}
+                    </TableRow>
+                  ))}
+                  <TableRow sx={{ bgcolor: 'action.hover' }}>
+                    <TableCell sx={{ fontWeight: 700 }}>{p} 小計</TableCell><TableCell /><TableCell align="right" sx={{ fontWeight: 700 }}>{all.length}</TableCell>
+                    {ev.stations.map(s => <TableCell key={s.id} align="right" sx={{ fontWeight: 700 }}>{cellFor(all, s)}</TableCell>)}
+                  </TableRow>
+                </React.Fragment>
+              );
+            })}
+            {emps.length === 0 && <TableRow><TableCell colSpan={3 + ev.stations.length}>參加範圍內沒有人員，請到活動設定調整。</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>同一台裝置的其他分頁掃描時，這裡會自動更新。</Typography>
+    </>
+  );
+}
+
+function Roster({ db, ev }) {
+  const notify = useContext(NotifyCtx);
+  const [stId, setStId] = useState(ev.stations[0] && ev.stations[0].id);
+  const [filter, setFilter] = useState('all');
+  const [q, setQ] = useState('');
+  const emps = scopeEmployees(db, ev);
+  const maps = stationMaps(db, ev);
+  const m = maps[stId] || {};
+  const ql = q.trim().toLowerCase();
+  const rows = emps.filter(e => {
+    if (filter === 'yes' && !m[e.empNo]) return false;
+    if (filter === 'no' && m[e.empNo]) return false;
+    if (ql && !(e.name.includes(q.trim()) || e.empNo.includes(ql) || e.dept.toLowerCase().includes(ql) || e.plant.toLowerCase().includes(ql))) return false;
+    return true;
+  });
+  const shown = rows.slice(0, 300);
+  return (
+    <>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 2 }} alignItems={{ md: 'center' }}>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel>關卡</InputLabel>
+          <Select label="關卡" value={stId || ''} onChange={e => setStId(e.target.value)}>
+            {ev.stations.map(s => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+          </Select>
+        </FormControl>
+        <ToggleButtonGroup size="small" exclusive value={filter} onChange={(e, v) => v && setFilter(v)}>
+          <ToggleButton value="all">全部</ToggleButton>
+          <ToggleButton value="yes">已通過</ToggleButton>
+          <ToggleButton value="no">未通過</ToggleButton>
+        </ToggleButtonGroup>
+        <TextField size="small" placeholder="搜尋姓名、工號、部門、廠別" value={q} onChange={e => setQ(e.target.value)} sx={{ flex: 1 }}
+          InputProps={{ startAdornment: <Icon sx={{ mr: 1, color: 'text.secondary' }}>search</Icon> }} />
+        <Button variant="outlined" startIcon={<Icon>download</Icon>} onClick={() => saveFile(`${ev.name}_報到紀錄_${ymd()}.xlsx`, exportEventBuffer(db, ev), notify)}>匯出 Excel</Button>
+      </Stack>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>共 {rows.length} 人{rows.length > 300 ? '，畫面只顯示前 300 筆，完整資料請匯出' : ''}</Typography>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead><TableRow>
+            <TableCell>工號</TableCell><TableCell>姓名</TableCell><TableCell>部門</TableCell><TableCell>廠別</TableCell>
+            <TableCell>狀態</TableCell><TableCell>時間</TableCell><TableCell>處理帳號</TableCell>
+          </TableRow></TableHead>
+          <TableBody>
+            {shown.map(e => {
+              const s = m[e.empNo];
+              return (
+                <TableRow key={e.empNo} hover>
+                  <TableCell>{e.empNo}</TableCell><TableCell>{e.name}</TableCell><TableCell>{e.dept}</TableCell><TableCell>{e.plant}</TableCell>
+                  <TableCell>{s ? <Chip size="small" color="success" label={s.manual ? '已通過（手動）' : '已通過'} /> : <Chip size="small" variant="outlined" label="未通過" />}</TableCell>
+                  <TableCell>{s ? fmtDT(s.time) : ''}</TableCell><TableCell>{s ? s.by : ''}</TableCell>
+                </TableRow>
+              );
+            })}
+            {shown.length === 0 && <TableRow><TableCell colSpan={7}>沒有符合條件的人員</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </>
+  );
+}
+
+function StaffAccounts({ db, update, ev }) {
+  const notify = useContext(NotifyCtx);
+  const list = db.staff.filter(s => s.eventId === ev.id).sort((a, b) => a.account.localeCompare(b.account));
+  const [n, setN] = useState(5);
+  const [printOpen, setPrintOpen] = useState(false);
+  const ended = isEnded(ev);
+  const generate = () => {
+    const count = Math.max(1, Math.min(50, parseInt(n, 10) || 0));
+    update(d => {
+      const nums = d.staff.filter(s => s.eventId === ev.id).map(s => parseInt(s.account.split('-').pop(), 10) || 0);
+      let next = (nums.length ? Math.max(...nums) : 0) + 1;
+      for (let i = 0; i < count; i++, next++) d.staff.push({ id: uid(), eventId: ev.id, account: `${ev.code}-${pad(next)}`, pin: genPin(), disabled: false, fails: 0, lockUntil: 0 });
+      return d;
+    });
+    notify(`已產生 ${count} 組報到帳號`, 'success');
+  };
+  const patch = (id, fn) => update(d => { fn(d.staff.find(s => s.id === id)); return d; });
+  const t = Date.now();
+  return (
+    <>
+      <Alert severity="info" sx={{ mb: 2 }}>
+        報到人員帳號只能登入這場活動，{fmtDT(ev.end)} 活動結束後會自動失效。連續輸錯 PIN 碼 {MAX_FAILS} 次會鎖定 15 分鐘。
+      </Alert>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }} alignItems={{ sm: 'center' }}>
+        <TextField size="small" type="number" label="產生數量" value={n} onChange={e => setN(e.target.value)} sx={{ width: 120 }} inputProps={{ min: 1, max: 50 }} disabled={ended} />
+        <Button variant="contained" startIcon={<Icon>group_add</Icon>} onClick={generate} disabled={ended}>產生帳號</Button>
+        <Box sx={{ flex: 1 }} />
+        <Button variant="outlined" startIcon={<Icon>print</Icon>} onClick={() => setPrintOpen(true)} disabled={!list.length}>列印帳號清單</Button>
+      </Stack>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead><TableRow><TableCell>帳號</TableCell><TableCell>PIN 碼</TableCell><TableCell>狀態</TableCell><TableCell align="right">操作</TableCell></TableRow></TableHead>
+          <TableBody>
+            {list.map(s => {
+              const locked = s.lockUntil > t;
+              const status = ended ? <Chip size="small" label="已失效" /> : s.disabled ? <Chip size="small" color="default" variant="outlined" label="已停用" />
+                : locked ? <Chip size="small" color="warning" label={`鎖定至 ${fmtTime(s.lockUntil)}`} /> : <Chip size="small" color="success" label="可使用" />;
+              return (
+                <TableRow key={s.id} hover>
+                  <TableCell sx={{ fontWeight: 600 }}>{s.account}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums', letterSpacing: 1 }}>{s.pin}</TableCell>
+                  <TableCell>{status}</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                    {locked && <Button size="small" onClick={() => patch(s.id, x => { x.lockUntil = 0; x.fails = 0; })}>解鎖</Button>}
+                    <Button size="small" onClick={() => { patch(s.id, x => { x.pin = genPin(); x.fails = 0; }); notify(`${s.account} 的 PIN 碼已重設`, 'success'); }}>重設 PIN</Button>
+                    <Button size="small" color={s.disabled ? 'primary' : 'error'} onClick={() => patch(s.id, x => { x.disabled = !x.disabled; })}>{s.disabled ? '啟用' : '停用'}</Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {list.length === 0 && <TableRow><TableCell colSpan={4}>還沒有報到人員帳號。輸入數量後按「產生帳號」。</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      <Dialog open={printOpen} onClose={() => setPrintOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle className="no-print">報到帳號清單</DialogTitle>
+        <DialogContent>
+          <div className="print-area">
+            <div className="slip-grid">
+              {list.filter(s => !s.disabled).map(s => (
+                <div key={s.id} className="slip">
+                  <div style={{ fontSize: 12, opacity: .75 }}>{ev.name}</div>
+                  <div style={{ fontSize: 13, marginTop: 6 }}>帳號</div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>{s.account}</div>
+                  <div style={{ fontSize: 13, marginTop: 4 }}>PIN 碼</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 2 }}>{s.pin}</div>
+                  <div style={{ fontSize: 12, marginTop: 6, opacity: .75 }}>有效至 {fmtDT(ev.end)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+        <DialogActions className="no-print">
+          <Button onClick={() => setPrintOpen(false)}>關閉</Button>
+          <Button variant="contained" startIcon={<Icon>print</Icon>} onClick={() => window.print()}>列印</Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
+function EventSettings({ db, update, ev, onDeleted }) {
+  const notify = useContext(NotifyCtx);
+  const [f, setF] = useState(() => ({ name: ev.name, start: toLocalInput(ev.start), end: toLocalInput(ev.end), scope: clone(ev.scope), stations: clone(ev.stations) }));
+  const [confirm, setConfirm] = useState(null);
+  const fileRef = useRef(null);
+  const emps = Object.values(db.employees).filter(e => e.active);
+  const plants = [...new Set(emps.map(e => e.plant))].sort();
+  const depts = [...new Set(emps.map(e => e.dept))].sort();
+  const memberCount = (db.members[ev.id] || []).length;
+  const scanCount = db.scans.filter(s => s.eventId === ev.id).length;
+  const ended = isEnded(ev);
+  const valid = f.name.trim() && fromLocalInput(f.end) > fromLocalInput(f.start) && f.stations.every(s => s.name.trim());
+
+  const save = () => {
+    update(d => {
+      const e = d.events.find(x => x.id === ev.id);
+      e.name = f.name.trim(); e.start = fromLocalInput(f.start);
+      if (!e.closed) e.end = fromLocalInput(f.end);
+      e.scope = f.scope; e.stations = f.stations.map(s => ({ ...s, name: s.name.trim() }));
+      return d;
+    });
+    notify('已儲存活動設定', 'success');
+  };
+  const importList = async file => {
+    try {
+      const p = await parseExcel(file, ['empNo']);
+      if (p.error) { notify(p.error, 'error'); return; }
+      const nos = [...new Set(p.rows.map(r => r.empNo).filter(Boolean))];
+      const unknown = nos.filter(x => !db.employees[x]);
+      update(d => { d.members[ev.id] = nos; return d; });
+      notify(`已匯入 ${nos.length} 人${unknown.length ? `，其中 ${unknown.length} 個工號不在員工資料裡` : ''}`, unknown.length ? 'warning' : 'success');
+    } catch (e) { notify('無法讀取這個檔案，請確認是 Excel 格式', 'error'); }
+  };
+  const setStation = (i, patch) => setF({ ...f, stations: f.stations.map((s, j) => j === i ? { ...s, ...patch } : s) });
+  const hasScans = sid => db.scans.some(s => s.eventId === ev.id && s.stationId === sid);
+
+  return (
+    <Stack spacing={3}>
+      <Paper variant="outlined" sx={{ p: 3 }}>
+        <Typography fontWeight={700} sx={{ mb: 2 }}>基本資料</Typography>
+        <Stack spacing={2}>
+          <TextField label="活動名稱" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            <TextField label="開始時間" type="datetime-local" fullWidth InputLabelProps={{ shrink: true }} value={f.start} onChange={e => setF({ ...f, start: e.target.value })} />
+            <TextField label="結束時間" type="datetime-local" fullWidth InputLabelProps={{ shrink: true }} value={f.end} disabled={ev.closed} onChange={e => setF({ ...f, end: e.target.value })} />
+          </Stack>
+          <Typography variant="body2" color="text.secondary">帳號代碼：{ev.code}（建立後不能修改）</Typography>
+        </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 3 }}>
+        <Typography fontWeight={700} sx={{ mb: 2 }}>參加範圍</Typography>
+        <Stack spacing={2}>
+          <FormControl fullWidth>
+            <InputLabel>誰可以參加</InputLabel>
+            <Select label="誰可以參加" value={f.scope.type} onChange={e => setF({ ...f, scope: { type: e.target.value, values: [] } })}>
+              <MenuItem value="all">全公司在職員工</MenuItem>
+              <MenuItem value="plants">指定廠別</MenuItem>
+              <MenuItem value="depts">指定部門</MenuItem>
+              <MenuItem value="list">匯入名單（Excel）</MenuItem>
+            </Select>
+          </FormControl>
+          {(f.scope.type === 'plants' || f.scope.type === 'depts') && (
+            <Autocomplete multiple options={f.scope.type === 'plants' ? plants : depts} value={f.scope.values}
+              onChange={(e, v) => setF({ ...f, scope: { ...f.scope, values: v } })}
+              renderInput={p => <TextField {...p} label={f.scope.type === 'plants' ? '選擇廠別' : '選擇部門'} />} />
+          )}
+          {f.scope.type === 'list' && (
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Button variant="outlined" startIcon={<Icon>upload_file</Icon>} onClick={() => fileRef.current && fileRef.current.click()}>匯入名單</Button>
+              <Typography variant="body2" color="text.secondary">目前名單 {memberCount} 人。Excel 只需要「工號」一欄。</Typography>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={e => { const fl = e.target.files[0]; e.target.value = ''; if (fl) importList(fl); }} />
+            </Stack>
+          )}
+          <Typography variant="body2" color="text.secondary">儲存後，範圍內的在職人數：{Object.values(db.employees).filter(e => e.active && inScope({ ...ev, scope: f.scope }, e, db.members)).length} 人</Typography>
+        </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 3 }}>
+        <Typography fontWeight={700} sx={{ mb: .5 }}>關卡</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>每個關卡各自記錄，同一張識別證在同一個關卡只能通過一次。</Typography>
+        <Stack spacing={1.5}>
+          {f.stations.map((s, i) => (
+            <Stack key={s.id} direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+              <Icon color="primary">{s.kind === 'checkin' ? 'how_to_reg' : 'redeem'}</Icon>
+              <TextField size="small" label="關卡名稱" value={s.name} onChange={e => setStation(i, { name: e.target.value })} sx={{ minWidth: 200 }} />
+              {s.kind === 'gift'
+                ? <FormControlLabel control={<Switch checked={!!s.requireCheckin} onChange={e => setStation(i, { requireCheckin: e.target.checked })} />} label="需先完成入場報到" />
+                : <Typography variant="body2" color="text.secondary">入場報到關卡</Typography>}
+              <Box sx={{ flex: 1 }} />
+              {s.kind !== 'checkin' && (
+                <Tooltip title={hasScans(s.id) ? '已有掃描紀錄，不能刪除' : '刪除關卡'}>
+                  <span><IconButton disabled={hasScans(s.id)} onClick={() => setF({ ...f, stations: f.stations.filter((_, j) => j !== i) })}><Icon>delete</Icon></IconButton></span>
+                </Tooltip>
+              )}
+            </Stack>
+          ))}
+          <Box><Button startIcon={<Icon>add</Icon>} onClick={() => setF({ ...f, stations: [...f.stations, { id: uid(), name: '領取紀念品', kind: 'gift', requireCheckin: true }] })}>新增領取關卡</Button></Box>
+        </Stack>
+      </Paper>
+
+      <Box><Button variant="contained" size="large" disabled={!valid} onClick={save} startIcon={<Icon>save</Icon>}>儲存設定</Button></Box>
+
+      <Paper variant="outlined" sx={{ p: 3, borderColor: 'error.main' }}>
+        <Typography fontWeight={700} color="error" sx={{ mb: 2 }}>進階操作</Typography>
+        <Stack spacing={2}>
+          {!ended && (
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+              <Button variant="outlined" color="error" onClick={() => setConfirm('close')}>立即結束活動</Button>
+              <Typography variant="body2" color="text.secondary">關閉報到，所有報到人員帳號立即失效。</Typography>
+            </Stack>
+          )}
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+            <Button variant="outlined" color="error" disabled={!scanCount} onClick={() => setConfirm('clear')}>清除所有掃描紀錄</Button>
+            <Typography variant="body2" color="text.secondary">演練結束後使用。目前有 {scanCount} 筆。</Typography>
+          </Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+            <Button variant="outlined" color="error" onClick={() => setConfirm('delete')}>刪除活動</Button>
+            <Typography variant="body2" color="text.secondary">活動、名單、帳號與紀錄會一併刪除。</Typography>
+          </Stack>
+        </Stack>
+      </Paper>
+
+      <ConfirmDialog open={confirm === 'close'} title="立即結束活動？" danger confirmText="結束活動"
+        body="報到和領取會馬上關閉，所有報到人員都會被登出。資料會保留 10 天後自動刪除。"
+        onClose={() => setConfirm(null)}
+        onConfirm={() => { update(d => { const e = d.events.find(x => x.id === ev.id); e.closed = true; e.end = Math.min(e.end, Date.now()); return d; }); notify('活動已結束', 'success'); }} />
+      <ConfirmDialog open={confirm === 'clear'} title="清除所有掃描紀錄？" danger confirmText="清除紀錄"
+        body={`這場活動的 ${scanCount} 筆報到與領取紀錄都會刪除，無法復原。名單和帳號會保留。`}
+        onClose={() => setConfirm(null)}
+        onConfirm={() => { update(d => { d.scans = d.scans.filter(s => s.eventId !== ev.id); return d; }); notify('已清除掃描紀錄', 'success'); }} />
+      <ConfirmDialog open={confirm === 'delete'} title="刪除這場活動？" danger confirmText="刪除活動"
+        body="活動、參加名單、報到人員帳號和所有紀錄都會刪除，無法復原。"
+        onClose={() => setConfirm(null)}
+        onConfirm={() => {
+          update(d => { d.events = d.events.filter(x => x.id !== ev.id); d.scans = d.scans.filter(s => s.eventId !== ev.id); d.staff = d.staff.filter(s => s.eventId !== ev.id); delete d.members[ev.id]; return d; });
+          notify('已刪除活動', 'success'); onDeleted();
+        }} />
+    </Stack>
+  );
+}
+
+/* ---------- 員工資料 ---------- */
+function EmployeesTab({ db, update, user }) {
+  const notify = useContext(NotifyCtx);
+  const fileRef = useRef(null);
+  const [q, setQ] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [headerErr, setHeaderErr] = useState(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  const all = Object.values(db.employees).sort((a, b) => a.empNo.localeCompare(b.empNo));
+  const activeCount = all.filter(e => e.active).length;
+  const ql = q.trim().toLowerCase();
+  const rows = all.filter(e => (showInactive || e.active) && (!ql || e.name.includes(q.trim()) || e.empNo.includes(ql) || e.dept.toLowerCase().includes(ql) || e.plant.toLowerCase().includes(ql)));
+
+  const onFile = async file => {
+    try {
+      const p = await parseExcel(file, ['empNo', 'name', 'dept', 'plant']);
+      if (p.error) { setHeaderErr(p); return; }
+      const seen = {};
+      p.rows.forEach(r => {
+        r.errors = [];
+        ['empNo', 'name', 'dept', 'plant'].forEach(k => { if (!r[k]) r.errors.push(`${FIELD_LABEL[k]}空白`); });
+        if (r.empNo) { if (seen[r.empNo]) r.errors.push(`工號與第 ${seen[r.empNo]} 列重複`); else seen[r.empNo] = r.r; }
+        if (r.errors.length) r.status = 'error';
+        else {
+          const ex = db.employees[r.empNo];
+          r.status = !ex ? 'new' : (ex.name !== r.name || ex.dept !== r.dept || ex.plant !== r.plant || !ex.active) ? 'update' : 'same';
+        }
+      });
+      const deactivate = all.filter(e => e.active && !seen[e.empNo]);
+      setPreview({ file: file.name, rows: p.rows, numericEmpNo: p.numericEmpNo, deactivate });
+    } catch (e) { notify('無法讀取這個檔案，請確認是 Excel 格式', 'error'); }
+  };
+  const apply = () => {
+    const p = preview; const t = Date.now();
+    const added = p.rows.filter(r => r.status === 'new').length;
+    const updated = p.rows.filter(r => r.status === 'update').length;
+    update(d => {
+      p.rows.forEach(r => { if (r.status === 'new' || r.status === 'update' || r.status === 'same') d.employees[r.empNo] = { empNo: r.empNo, name: r.name, dept: r.dept, plant: r.plant, active: true, updatedAt: t }; });
+      p.deactivate.forEach(e => { if (d.employees[e.empNo]) { d.employees[e.empNo].active = false; d.employees[e.empNo].updatedAt = t; } });
+      d.importLogs.unshift({ id: uid(), time: t, by: user.name, file: p.file, added, updated, deactivated: p.deactivate.length });
+      d.importLogs = d.importLogs.slice(0, 20);
+      return d;
+    });
+    setPreview(null);
+    notify(`匯入完成：新增 ${added} 人，更新 ${updated} 人，停用 ${p.deactivate.length} 人`, 'success');
+  };
+
+  return (
+    <>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} sx={{ mb: 2 }}>
+        <Box sx={{ flex: 1 }}>
+          <Typography variant="h5" fontWeight={700}>員工資料</Typography>
+          <Typography variant="body2" color="text.secondary">在職 {activeCount} 人，停用 {all.length - activeCount} 人。建議在活動前一天匯入最新名單。</Typography>
+        </Box>
+        <Button variant="outlined" startIcon={<Icon>description</Icon>} onClick={() => saveFile('員工資料匯入範本.xlsx', templateBuffer(), notify)}>下載匯入範本</Button>
+        <Button variant="outlined" startIcon={<Icon>qr_code_2</Icon>} onClick={() => setQrOpen(true)}>測試用 QR code</Button>
+        <Button variant="contained" startIcon={<Icon>upload_file</Icon>} onClick={() => fileRef.current && fileRef.current.click()}>匯入 Excel</Button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={e => { const f = e.target.files[0]; e.target.value = ''; if (f) onFile(f); }} />
+      </Stack>
+
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }} alignItems={{ sm: 'center' }}>
+        <TextField size="small" placeholder="搜尋姓名、工號、部門、廠別" value={q} onChange={e => setQ(e.target.value)} sx={{ flex: 1 }}
+          InputProps={{ startAdornment: <Icon sx={{ mr: 1, color: 'text.secondary' }}>search</Icon> }} />
+        <FormControlLabel control={<Switch checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />} label="顯示停用人員" />
+      </Stack>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead><TableRow><TableCell>工號</TableCell><TableCell>姓名</TableCell><TableCell>部門</TableCell><TableCell>廠別</TableCell><TableCell>狀態</TableCell></TableRow></TableHead>
+          <TableBody>
+            {rows.slice(0, 300).map(e => (
+              <TableRow key={e.empNo} hover>
+                <TableCell>{e.empNo}</TableCell><TableCell>{e.name}</TableCell><TableCell>{e.dept}</TableCell><TableCell>{e.plant}</TableCell>
+                <TableCell>{e.active ? <Chip size="small" color="success" variant="outlined" label="在職" /> : <Chip size="small" label="停用" />}</TableCell>
+              </TableRow>
+            ))}
+            {rows.length === 0 && <TableRow><TableCell colSpan={5}>沒有符合條件的員工</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      {rows.length > 300 && <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>只顯示前 300 筆，請用搜尋縮小範圍。</Typography>}
+
+      {db.importLogs.length > 0 && (
+        <>
+          <Typography fontWeight={700} sx={{ mt: 3, mb: 1 }}>匯入紀錄</Typography>
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead><TableRow><TableCell>時間</TableCell><TableCell>檔案</TableCell><TableCell>操作人員</TableCell><TableCell align="right">新增</TableCell><TableCell align="right">更新</TableCell><TableCell align="right">停用</TableCell></TableRow></TableHead>
+              <TableBody>
+                {db.importLogs.slice(0, 5).map(l => (
+                  <TableRow key={l.id}><TableCell>{fmtDT(l.time)}</TableCell><TableCell>{l.file}</TableCell><TableCell>{l.by}</TableCell>
+                    <TableCell align="right">{l.added}</TableCell><TableCell align="right">{l.updated}</TableCell><TableCell align="right">{l.deactivated}</TableCell></TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </>
+      )}
+
+      <Dialog open={!!headerErr} onClose={() => setHeaderErr(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>無法匯入這個檔案</DialogTitle>
+        <DialogContent>
+          <Alert severity="error" sx={{ mb: 2 }}>{headerErr && headerErr.error}</Alert>
+          {headerErr && headerErr.headers && <Typography variant="body2">檔案第一列的標題是：{headerErr.headers.join('、') || '（空白）'}</Typography>}
+          <Typography variant="body2" sx={{ mt: 1 }}>第一列需要有部門、工號、廠別、姓名四個標題，順序不拘。也接受「員工編號」「廠區」等常見寫法。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => saveFile('員工資料匯入範本.xlsx', templateBuffer(), notify)}>下載匯入範本</Button>
+          <Button variant="contained" onClick={() => setHeaderErr(null)}>關閉</Button>
+        </DialogActions>
+      </Dialog>
+
+      <ImportPreview preview={preview} activeCount={activeCount} onClose={() => setPreview(null)} onApply={apply} />
+      <QrSheet open={qrOpen} onClose={() => setQrOpen(false)} employees={all.filter(e => e.active)} />
+    </>
+  );
+}
+
+function ImportPreview({ preview, activeCount, onClose, onApply }) {
+  const [filter, setFilter] = useState('all');
+  if (!preview) return null;
+  const c = k => preview.rows.filter(r => r.status === k).length;
+  const errors = c('error');
+  const rows = preview.rows.filter(r => filter === 'all' || r.status === filter);
+  const bigDeactivate = activeCount > 0 && preview.deactivate.length > activeCount * 0.3;
+  const label = { new: ['新增', 'success'], update: ['更新', 'info'], same: ['不變', 'default'], error: ['錯誤', 'error'] };
+  return (
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>確認匯入：{preview.file}</DialogTitle>
+      <DialogContent dividers>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+          <Chip color="success" label={`新增 ${c('new')}`} />
+          <Chip color="info" label={`更新 ${c('update')}`} />
+          <Chip label={`不變 ${c('same')}`} />
+          <Chip color="warning" label={`停用 ${preview.deactivate.length}`} />
+          {errors > 0 && <Chip color="error" label={`錯誤 ${errors}`} />}
+        </Stack>
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          {errors > 0 && <Alert severity="error">有 {errors} 列資料有問題，請修正 Excel 後重新匯入。</Alert>}
+          {preview.numericEmpNo > 0 && <Alert severity="warning">有 {preview.numericEmpNo} 個工號在 Excel 裡是數字格式，開頭的 0 可能已經不見了。請把工號欄設成「文字」格式，再確認一次。</Alert>}
+          {preview.deactivate.length > 0 && (
+            <Alert severity={bigDeactivate ? 'warning' : 'info'}>
+              這份檔案裡沒有的 {preview.deactivate.length} 位在職員工會被設為停用（不會刪除）。{bigDeactivate ? '人數偏多，請確認這是完整的員工名單。' : ''}
+            </Alert>
+          )}
+        </Stack>
+        <ToggleButtonGroup size="small" exclusive value={filter} onChange={(e, v) => v && setFilter(v)} sx={{ mb: 1 }}>
+          <ToggleButton value="all">全部</ToggleButton>
+          <ToggleButton value="new">新增</ToggleButton>
+          <ToggleButton value="update">更新</ToggleButton>
+          <ToggleButton value="error">錯誤</ToggleButton>
+        </ToggleButtonGroup>
+        <TableContainer sx={{ maxHeight: 360 }}>
+          <Table size="small" stickyHeader>
+            <TableHead><TableRow><TableCell>列</TableCell><TableCell>部門</TableCell><TableCell>工號</TableCell><TableCell>廠別</TableCell><TableCell>姓名</TableCell><TableCell>結果</TableCell></TableRow></TableHead>
+            <TableBody>
+              {rows.slice(0, 200).map(r => (
+                <TableRow key={r.r}>
+                  <TableCell>{r.r}</TableCell><TableCell>{r.dept}</TableCell><TableCell>{r.empNo}</TableCell><TableCell>{r.plant}</TableCell><TableCell>{r.name}</TableCell>
+                  <TableCell>
+                    <Chip size="small" color={label[r.status][1]} label={label[r.status][0]} />
+                    {r.errors.length > 0 && <Typography variant="caption" color="error" sx={{ display: 'block' }}>{r.errors.join('、')}</Typography>}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>取消</Button>
+        <Button variant="contained" disabled={errors > 0} onClick={onApply}>確認匯入</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function QrSheet({ open, onClose, employees }) {
+  const [q, setQ] = useState('');
+  const list = employees.filter(e => !q.trim() || e.name.includes(q.trim()) || e.empNo.includes(q.trim())).slice(0, 24);
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle className="no-print">測試用 QR code</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" color="text.secondary" className="no-print" sx={{ mb: 2 }}>
+          內容是純工號，和識別證相同。可以列印出來，或在另一台裝置開啟這個畫面，用來測試掃描。
+        </Typography>
+        <TextField size="small" fullWidth placeholder="搜尋姓名或工號" value={q} onChange={e => setQ(e.target.value)} sx={{ mb: 2 }} className="no-print" />
+        <div className="print-area">
+          <div className="qr-grid">
+            {list.map(e => (
+              <div key={e.empNo} className="qr-cell">
+                <QRBox text={e.empNo} size={120} />
+                <div style={{ fontWeight: 700, marginTop: 6 }}>{e.name}</div>
+                <div style={{ fontSize: 13 }}>{e.empNo}｜{e.plant}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </DialogContent>
+      <DialogActions className="no-print">
+        <Button onClick={onClose}>關閉</Button>
+        <Button variant="contained" startIcon={<Icon>print</Icon>} onClick={() => window.print()}>列印</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+/* ---------- 系統帳號 ---------- */
+function AccountsTab({ db, update, user }) {
+  const notify = useContext(NotifyCtx);
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ name: '', username: '' });
+  const [shown, setShown] = useState(null);
+  const taken = db.users.some(u => u.username === f.username.trim());
+  const create = () => {
+    const pw = genPwd();
+    update(d => { d.users.push({ id: uid(), username: f.username.trim(), password: pw, role: 'organizer', name: f.name.trim(), disabled: false }); return d; });
+    setOpen(false); setShown({ username: f.username.trim(), password: pw }); setF({ name: '', username: '' });
+  };
+  const reset = u => { const pw = genPwd(); update(d => { d.users.find(x => x.id === u.id).password = pw; return d; }); setShown({ username: u.username, password: pw }); };
+  return (
+    <>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+        <Box>
+          <Typography variant="h5" fontWeight={700}>系統帳號</Typography>
+          <Typography variant="body2" color="text.secondary">活動承辦人只能看到和管理自己建立的活動。密碼由系統產生。</Typography>
+        </Box>
+        <Button variant="contained" startIcon={<Icon>person_add</Icon>} onClick={() => setOpen(true)}>新增承辦人</Button>
+      </Stack>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead><TableRow><TableCell>名稱</TableCell><TableCell>帳號</TableCell><TableCell>角色</TableCell><TableCell>狀態</TableCell><TableCell align="right">操作</TableCell></TableRow></TableHead>
+          <TableBody>
+            {db.users.map(u => (
+              <TableRow key={u.id} hover>
+                <TableCell>{u.name}</TableCell><TableCell>{u.username}</TableCell>
+                <TableCell>{u.role === 'admin' ? '系統管理員' : '活動承辦人'}</TableCell>
+                <TableCell>{u.disabled ? <Chip size="small" label="已停用" /> : <Chip size="small" color="success" variant="outlined" label="可使用" />}</TableCell>
+                <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                  <Button size="small" onClick={() => reset(u)}>重設密碼</Button>
+                  {u.id !== user.id && <Button size="small" color={u.disabled ? 'primary' : 'error'} onClick={() => update(d => { const x = d.users.find(y => y.id === u.id); x.disabled = !x.disabled; return d; })}>{u.disabled ? '啟用' : '停用'}</Button>}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>新增活動承辦人</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField label="名稱" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="例如 彰化廠福委會" />
+            <TextField label="登入帳號" value={f.username} onChange={e => setF({ ...f, username: e.target.value.replace(/\s/g, '') })} error={taken} helperText={taken ? '這個帳號已存在' : ''} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpen(false)}>取消</Button>
+          <Button variant="contained" disabled={!f.name.trim() || !f.username.trim() || taken} onClick={create}>新增</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!shown} onClose={() => setShown(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>帳號密碼</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>密碼只會顯示這一次，請記下來交給承辦人。</Alert>
+          <Typography>帳號：<b>{shown && shown.username}</b></Typography>
+          <Typography sx={{ mt: 1 }}>密碼：<b style={{ letterSpacing: 1 }}>{shown && shown.password}</b></Typography>
+        </DialogContent>
+        <DialogActions><Button variant="contained" onClick={() => setShown(null)}>我記下來了</Button></DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
+/* ---------- App ---------- */
+function App() {
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)');
+  const attr = document.documentElement.getAttribute('data-theme');
+  const mode = attr === 'dark' ? 'dark' : attr === 'light' ? 'light' : (prefersDark ? 'dark' : 'light');
+  const theme = useMemo(() => makeTheme(mode), [mode]);
+
+  const [db, setDb] = useState(() => {
+    const s = loadState();
+    const d = purge(s && s.version === 1 ? s : seed());
+    saveState(d);
+    return d;
+  });
+  const dbRef = useRef(db); dbRef.current = db;
+  const update = useCallback(fn => {
+    const next = fn(clone(dbRef.current));
+    dbRef.current = next; setDb(next); saveState(next);
+    return next;
+  }, []);
+
+  const [session, setSessionRaw] = useState(() => loadSession());
+  const setSession = useCallback(s => { setSessionRaw(s); saveSession(s); }, []);
+  const [snack, setSnack] = useState(null);
+  const notify = useCallback((msg, severity = 'info') => setSnack({ msg, severity, key: Date.now() }), []);
+
+  useEffect(() => {
+    const onStorage = e => {
+      if (e.key === STORE_KEY && e.newValue) {
+        try { const d = JSON.parse(e.newValue); dbRef.current = d; setDb(d); } catch (_) {}
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    const iv = setInterval(() => {
+      const d = purge(dbRef.current);
+      if (d !== dbRef.current) { dbRef.current = d; setDb(d); saveState(d); }
+      else setDb(x => ({ ...x }));
+    }, 30000);
+    setTimeout(() => getDownloads(), 0);
+    return () => { window.removeEventListener('storage', onStorage); clearInterval(iv); };
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    if (session.type === 'staff') {
+      const st = db.staff.find(s => s.id === session.staffId);
+      const ev = db.events.find(e => e.id === session.eventId);
+      if (!st || st.disabled || !ev || isEnded(ev)) {
+        setSession(null);
+        notify(!ev || isEnded(ev) ? '活動已結束，報到帳號已失效' : '這個報到帳號已被停用', 'warning');
+      }
+    } else {
+      const u = db.users.find(x => x.id === session.userId);
+      if (!u || u.disabled) setSession(null);
+    }
+  }, [db, session]);
+
+  let page;
+  if (!session) page = <LoginPage db={db} update={update} onLogin={setSession} />;
+  else if (session.type === 'staff') page = <StaffApp db={db} update={update} session={session} setSession={setSession} />;
+  else page = <AdminApp db={db} update={update} session={session} setSession={setSession} />;
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <NotifyCtx.Provider value={notify}>
+        {page}
+        <Snackbar key={snack && snack.key} open={!!snack} autoHideDuration={3500} onClose={(e, r) => { if (r !== 'clickaway') setSnack(null); }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} sx={{ mb: 'env(safe-area-inset-bottom, 0px)' }}>
+          {snack ? <Alert severity={snack.severity} variant="filled" onClose={() => setSnack(null)}>{snack.msg}</Alert> : <span />}
+        </Snackbar>
+      </NotifyCtx.Provider>
+    </ThemeProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<script>
+  setTimeout(function () {
+    var b = document.getElementById('boot');
+    if (b && (!window.React || !window.MaterialUI)) b.textContent = '元件載入失敗，請確認網路連線後重新整理。';
+  }, 8000);
+</script>
+</body>
+</html>
