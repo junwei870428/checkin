@@ -8,6 +8,12 @@ export class ApiError extends Error {
   }
 }
 
+// 已登入的請求收到 401（登入逾時、帳號停用、活動結束）時通知 AuthProvider 登出
+let onUnauthorized: (message: string) => void = () => {};
+export function setUnauthorizedHandler(fn: (message: string) => void) {
+  onUnauthorized = fn;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
@@ -23,7 +29,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const e = (data as ApiErrorBody | null)?.error;
-    throw new ApiError(res.status, e?.code ?? 'unknown', e?.message ?? `系統發生錯誤（${res.status}）`);
+    const err = new ApiError(res.status, e?.code ?? 'unknown', e?.message ?? `系統發生錯誤（${res.status}）`);
+    if (res.status === 401 && !path.startsWith('/auth/') && path !== '/me') onUnauthorized(err.message);
+    throw err;
   }
   return data as T;
 }

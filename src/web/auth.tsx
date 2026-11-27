@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Me } from '../shared/types';
-import { api, ApiError } from './api';
+import { api, ApiError, setUnauthorizedHandler } from './api';
 
 interface AuthState {
   me: Me | null;
@@ -41,6 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    setUnauthorizedHandler(msg => {
+      setMe(null);
+      setNotice(msg === '請重新登入' ? '登入已逾時，請重新登入' : msg);
+    });
     void refresh();
   }, [refresh]);
 
