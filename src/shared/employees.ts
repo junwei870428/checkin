@@ -84,6 +84,10 @@ export interface ImportLog {
   deactivated: number;
 }
 
+/** 登入帳號格式，與 scripts/create-admin.ts 建立系統管理員時相同 */
+export const USERNAME_PATTERN = /^[A-Za-z0-9._-]{2,64}$/;
+export const USERNAME_HINT = '2 到 64 個英文字母、數字或 . _ -';
+
 export interface UserAccount {
   id: string;
   username: string;

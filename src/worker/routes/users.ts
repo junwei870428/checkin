@@ -1,7 +1,7 @@
 // 系統帳號：承辦人建立、重設密碼、停用與啟用（F-ACC-1，規劃書第 8 節）
 
 import { Hono } from 'hono';
-import type { PasswordIssued, UserAccount } from '../../shared/employees';
+import { USERNAME_HINT, USERNAME_PATTERN, type PasswordIssued, type UserAccount } from '../../shared/employees';
 import type { Role } from '../../shared/types';
 import { requireAuth, requireUser } from '../auth';
 import { genPassword, hashSecret, newId, newSalt } from '../crypto';
@@ -36,8 +36,7 @@ export const userRoutes = new Hono<AppEnv>()
     const b = await c.req.json().catch(() => null);
     const username = typeof b?.username === 'string' ? b.username.trim() : '';
     const name = typeof b?.name === 'string' ? b.name.trim() : '';
-    // 登入時帳號上限 64 字元並去除前後空白，帳號中間也不允許空白
-    if (!username || username.length > 64 || /\s/.test(username)) return apiError(c, 400, 'bad_request', '登入帳號需為 1 到 64 字，不可包含空白');
+    if (!USERNAME_PATTERN.test(username)) return apiError(c, 400, 'bad_request', `登入帳號需為 ${USERNAME_HINT}`);
     if (!name || name.length > 64) return apiError(c, 400, 'bad_request', '名稱需為 1 到 64 字');
     const password = genPassword();
     const salt = newSalt();

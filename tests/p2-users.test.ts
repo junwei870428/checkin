@@ -55,7 +55,16 @@ describe('POST /api/users', () => {
 
   it('帳號或名稱不合格回 400', async () => {
     const { env, admin } = await setup();
-    for (const body of [{ name: '小組' }, { username: 'a b', name: '小組' }, { username: 'x'.repeat(65), name: '小組' }, { username: 'ok', name: ' ' }]) {
+    const bad = [
+      { name: '小組' },
+      { username: 'a', name: '小組' },
+      { username: 'a b', name: '小組' },
+      { username: '王小明', name: '小組' },
+      { username: 'x'.repeat(65), name: '小組' },
+      { username: 'ok', name: ' ' },
+      { username: 'ok', name: 'x'.repeat(65) },
+    ];
+    for (const body of bad) {
       const res = await call(env, 'POST', '/api/users', { cookie: admin.cookie, body });
       expect(res.status).toBe(400);
       expect(res.json.error.code).toBe('bad_request');

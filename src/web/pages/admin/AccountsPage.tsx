@@ -21,7 +21,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
-import type { CreateUserBody, PasswordIssued, UserAccount } from '../../../shared/employees';
+import { USERNAME_HINT, USERNAME_PATTERN, type CreateUserBody, type PasswordIssued, type UserAccount } from '../../../shared/employees';
 import { api, ApiError } from '../../api';
 import { useAuth } from '../../auth';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -34,6 +34,7 @@ function CreateDialog({ open, onClose, onCreated }: { open: boolean; onClose: ()
   const [f, setF] = useState<CreateUserBody>({ name: '', username: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const badUsername = f.username !== '' && !USERNAME_PATTERN.test(f.username);
   const close = () => {
     setF({ name: '', username: '' });
     setError('');
@@ -56,7 +57,13 @@ function CreateDialog({ open, onClose, onCreated }: { open: boolean; onClose: ()
       <DialogTitle>新增活動承辦人</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField label="名稱" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="例如 彰化廠福委會" />
+          <TextField
+            label="名稱"
+            value={f.name}
+            onChange={e => setF({ ...f, name: e.target.value })}
+            placeholder="例如 彰化廠福委會"
+            slotProps={{ htmlInput: { maxLength: 64 } }}
+          />
           <TextField
             label="登入帳號"
             value={f.username}
@@ -64,14 +71,14 @@ function CreateDialog({ open, onClose, onCreated }: { open: boolean; onClose: ()
               setF({ ...f, username: e.target.value.replace(/\s/g, '') });
               setError('');
             }}
-            error={!!error}
-            helperText={error}
+            error={badUsername || !!error}
+            helperText={error || USERNAME_HINT}
           />
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={close}>取消</Button>
-        <Button variant="contained" disabled={!f.name.trim() || !f.username || busy} onClick={() => void submit()}>新增</Button>
+        <Button variant="contained" disabled={!f.name.trim() || !f.username || badUsername || busy} onClick={() => void submit()}>新增</Button>
       </DialogActions>
     </Dialog>
   );
