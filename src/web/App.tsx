@@ -1,11 +1,20 @@
-import { Box, CircularProgress, CssBaseline, ThemeProvider, useMediaQuery } from '@mui/material';
-import { useMemo, type ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { CssBaseline, ThemeProvider, useMediaQuery } from '@mui/material';
+import { lazy, Suspense, useMemo, type ReactNode } from 'react';
+import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth';
-import AdminHome from './pages/AdminHome';
+import { Loading } from './components/Loading';
+import { NotifyProvider } from './components/notify';
+import AdminLayout from './pages/admin/AdminLayout';
 import LoginPage from './pages/LoginPage';
-import StaffHome from './pages/StaffHome';
 import { makeTheme } from './theme';
+
+// 各頁分開載入：報到端手機不用下載後台的 SheetJS，後台也不用下載相機掃描套件
+const EventsPage = lazy(() => import('./pages/admin/EventsPage'));
+const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
+const EmployeesPage = lazy(() => import('./pages/admin/EmployeesPage'));
+const AccountsPage = lazy(() => import('./pages/admin/AccountsPage'));
+const StationsPage = lazy(() => import('./pages/checkin/StationsPage'));
+const ScanPage = lazy(() => import('./pages/checkin/ScanPage'));
 
 export default function App() {
   const dark = useMediaQuery('(prefers-color-scheme: dark)');
@@ -13,9 +22,11 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
+      <NotifyProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </NotifyProvider>
     </ThemeProvider>
   );
 }
@@ -33,21 +44,34 @@ function Guard({ type, children }: { type: 'user' | 'staff'; children: ReactNode
   return <>{children}</>;
 }
 
+function AdminOnly({ children }: { children: ReactNode }) {
+  const { me } = useAuth();
+  if (me?.type !== 'user' || me.role !== 'admin') return <Navigate to="/admin/events" replace />;
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   const { me, loading } = useAuth();
-  if (loading) {
-    return (
-      <Box sx={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
+  if (loading) return <Loading />;
   return (
-    <Routes>
-      <Route path="/login" element={me ? <Navigate to={homePath(me.type)} replace /> : <LoginPage />} />
-      <Route path="/checkin/*" element={<Guard type="staff"><StaffHome /></Guard>} />
-      <Route path="/admin/*" element={<Guard type="user"><AdminHome /></Guard>} />
-      <Route path="*" element={<Navigate to={homePath(me?.type)} replace />} />
-    </Routes>
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route path="/login" element={me ? <Navigate to={homePath(me.type)} replace /> : <LoginPage />} />
+        <Route path="/admin" element={<Guard type="user"><AdminLayout /></Guard>}>
+          <Route index element={<Navigate to="/admin/events" replace />} />
+          <Route path="events" element={<EventsPage />} />
+          <Route path="events/:id" element={<EventDetailPage />} />
+          <Route path="employees" element={<AdminOnly><EmployeesPage /></AdminOnly>} />
+          <Route path="accounts" element={<AdminOnly><AccountsPage /></AdminOnly>} />
+          <Route path="*" element={<Navigate to="/admin/events" replace />} />
+        </Route>
+        <Route path="/checkin" element={<Guard type="staff"><Outlet /></Guard>}>
+          <Route index element={<ScanPage />} />
+          <Route path="stations" element={<StationsPage />} />
+          <Route path="*" element={<Navigate to="/checkin/stations" replace />} />
+        </Route>
+        <Route path="*" element={<Navigate to={homePath(me?.type)} replace />} />
+      </Routes>
+    </Suspense>
   );
 }
