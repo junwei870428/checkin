@@ -1,6 +1,6 @@
 // 以 node:sqlite 模擬 D1，讓路由測試不用起 wrangler。
 // 只實作路由會用到的部分：prepare().bind().first/all/run/raw、batch（單一交易）、exec。
-// meta.changes 與 D1 相同只算該語句本身影響的列（不含 trigger），rows_read 一律為 0，量讀取請用 wrangler dev 實測。
+// meta.changes 與 D1 相同，含 trigger 改到的列；rows_read 一律為 0，量讀取請用 wrangler dev 實測。
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -57,7 +57,8 @@ class ShimD1 {
           rows_written: written,
           last_row_id: last.id as number,
           changed_db: written > 0,
-          changes: written > 0 ? (last.n as number) : 0,
+          // 與 wrangler 本機 D1 實測一致：changes 含 trigger 改到的列（正式掃描寫入回 2）
+          changes: written,
         },
       };
     } catch (e) {

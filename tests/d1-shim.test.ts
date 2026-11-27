@@ -19,7 +19,7 @@ describe('D1 模擬', () => {
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first('n')).toBe(0);
   });
 
-  it('meta.changes 只算語句本身影響的列，ON CONFLICT DO NOTHING 衝突時為 0', async () => {
+  it('meta.changes 與 D1 相同含 trigger 改到的列，ON CONFLICT DO NOTHING 衝突時為 0', async () => {
     const env = makeEnv();
     const owner = await seedUser(env);
     const ev = await seedEvent(env, { ownerId: owner.id });
@@ -28,7 +28,8 @@ describe('D1 模擬', () => {
         `INSERT INTO scans (id, event_id, station_id, emp_no, scanned_at, by_account, device)
          VALUES (?, ?, ?, '001', 0, 'A-01', 'desktop') ON CONFLICT DO NOTHING`,
       ).bind(crypto.randomUUID(), ev.id, ev.stationIds[0]).run();
-    expect((await insert()).meta.changes).toBe(1);
+    // 正式紀錄寫入：scans 1 列 + trigger 更新 stations 1 列（wrangler 本機 D1 實測同為 2）
+    expect((await insert()).meta.changes).toBe(2);
     expect((await insert()).meta.changes).toBe(0);
     expect(await env.DB.prepare('SELECT passed_count FROM stations WHERE id = ?').bind(ev.stationIds[0]).first('passed_count')).toBe(1);
   });
