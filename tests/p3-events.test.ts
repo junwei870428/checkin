@@ -108,6 +108,20 @@ describe('POST /api/events', () => {
     expect(res.json.error.message).toContain('SPRING');
   });
 
+  it('同時建立同一代碼時，後到的一筆由唯一索引擋下並回 400', async () => {
+    const s = await setup();
+    await seedEvent(s.env, { ownerId: s.other.id, code: 'SPRING' });
+    // 模擬兩個請求都通過事前檢查：讓代碼檢查查不到既有活動
+    const prepare = s.env.DB.prepare.bind(s.env.DB);
+    s.env.DB.prepare = ((sql: string) =>
+      prepare(sql.startsWith('SELECT 1 FROM events WHERE code') ? 'SELECT 1 WHERE ? IS NULL AND 0' : sql)) as typeof s.env.DB.prepare;
+    const res = await call(s.env, 'POST', '/api/events', { cookie: s.owner.cookie, body: body() });
+    expect(res.status).toBe(400);
+    expect(res.json.error.code).toBe('code_taken');
+    s.env.DB.prepare = prepare;
+    expect(await s.env.DB.prepare("SELECT COUNT(*) AS n FROM events WHERE code = 'SPRING'").first('n')).toBe(1);
+  });
+
   it.each([
     ['代碼太短', { code: 'A' }],
     ['代碼太長', { code: 'ABCDEFGHI' }],

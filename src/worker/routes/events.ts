@@ -209,20 +209,25 @@ export const eventRoutes = new Hono<AppEnv>()
     const b = parseCreate(await readJson(c), now);
     if (typeof b === 'string') return bad(c, b);
     const db = c.env.DB;
-    if (await db.prepare('SELECT 1 FROM events WHERE code = ?').bind(b.code).first()) {
-      return apiError(c, 400, 'code_taken', `帳號代碼 ${b.code} 已被其他活動使用，請換一個`);
-    }
     const id = newId();
-    await db.batch([
-      db.prepare(
-        `INSERT INTO events (id, name, code, owner_id, start_at, end_at, rehearsal, scope_type, scope_values, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 'all', '[]', ?)`,
-      ).bind(id, b.name, b.code, c.get('auth').id, b.startAt, b.endAt, now),
-      ...DEFAULT_STATIONS.map((s, i) =>
-        db.prepare('INSERT INTO stations (id, event_id, name, kind, require_checkin, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(newId(), id, s.name, s.kind, s.requireCheckin, i),
-      ),
-    ]);
+    const codeTaken = () => apiError(c, 400, 'code_taken', `帳號代碼 ${b.code} 已被其他活動使用，請換一個`);
+    if (await db.prepare('SELECT 1 FROM events WHERE code = ?').bind(b.code).first()) return codeTaken();
+    // 兩人同時建立同一代碼時，上面的檢查都會通過，由唯一索引擋下後到的那一筆
+    try {
+      await db.batch([
+        db.prepare(
+          `INSERT INTO events (id, name, code, owner_id, start_at, end_at, rehearsal, scope_type, scope_values, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, 'all', '[]', ?)`,
+        ).bind(id, b.name, b.code, c.get('auth').id, b.startAt, b.endAt, now),
+        ...DEFAULT_STATIONS.map((s, i) =>
+          db.prepare('INSERT INTO stations (id, event_id, name, kind, require_checkin, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(newId(), id, s.name, s.kind, s.requireCheckin, i),
+        ),
+      ]);
+    } catch (e) {
+      if (String((e as Error).message).includes('UNIQUE constraint failed: events.code')) return codeTaken();
+      throw e;
+    }
     return c.json({ id }, 201);
   })
 
