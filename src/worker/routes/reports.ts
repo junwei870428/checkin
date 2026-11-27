@@ -23,9 +23,10 @@ const FORMAL = 's.rehearsal = 0 AND s.voided_at IS NULL';
 
 const STATIONS_SQL = 'SELECT id, name, kind FROM stations WHERE event_id = ? ORDER BY sort_order, rowid';
 
-/** 規劃書第 9 節要求記錄每個 API 的 meta.rows_read；登入檢查與讀活動另各讀 1 列，不在此計入 */
+/** 規劃書第 9 節要求記錄每個 API 的 meta.rows_read，括號內是各查詢的值；登入檢查與讀活動的主鍵查詢不在此計入 */
 function logRowsRead(route: string, results: D1Result[]) {
-  console.log(`${route} rows_read=${results.reduce((n, r) => n + r.meta.rows_read, 0)}`);
+  const each = results.map(r => r.meta.rows_read);
+  console.log(`${route} rows_read=${each.reduce((a, b) => a + b, 0)} (${each.join('+')})`);
 }
 
 export const reportRoutes = new Hono<AppEnv>()
