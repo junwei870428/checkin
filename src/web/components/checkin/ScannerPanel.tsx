@@ -25,6 +25,7 @@ export function ScannerPanel({ onCode }: { onCode: (code: string) => void }) {
       const input = ref.current;
       if (!input) return;
       if (document.activeElement !== input && !busyElsewhere(document.activeElement)) input.focus();
+      // 不在 blur 當下顯示警告：按下「撤銷」時欄位會先失焦，警告撐開版面會讓按鈕在放開滑鼠前移走
       setFocused(document.activeElement === input && document.hasFocus());
     }, 500);
     return () => clearInterval(t);
@@ -51,7 +52,6 @@ export function ScannerPanel({ onCode }: { onCode: (code: string) => void }) {
         placeholder="等待掃描…"
         onKeyDown={onKeyDown}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
         slotProps={{
           htmlInput: {
             autoComplete: 'off', autoCorrect: 'off', autoCapitalize: 'off', spellCheck: false,
