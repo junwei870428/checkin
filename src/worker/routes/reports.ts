@@ -113,7 +113,7 @@ export const reportRoutes = new Hono<AppEnv>()
            FROM employees e
            LEFT JOIN (
              SELECT s.emp_no, json_group_object(s.station_id, json_object(
-                      'at', s.scanned_at, 'by', s.by_account, 'manual', json(iif(s.manual = 1, 'true', 'false')))) AS passes
+                      'at', s.scanned_at, 'by', s.by_account, 'byHolder', s.by_holder, 'manual', json(iif(s.manual = 1, 'true', 'false')))) AS passes
                FROM scans s WHERE s.event_id = ? AND ${FORMAL}
               GROUP BY s.emp_no
            ) p ON p.emp_no = e.emp_no

@@ -28,12 +28,18 @@ export interface ScanRef {
   id: string;
   scannedAt: number;
   byAccount: string;
+  /** 掃描當下的帳號使用人，舊資料是空字串 */
+  byHolder: string;
 }
 
 export interface PreviousScan {
   scannedAt: number;
   byAccount: string;
+  byHolder: string;
 }
+
+/** 顯示用：XMAS-01（王小明），沒有使用人時只顯示帳號 */
+export const staffLabel = (account: string, holder: string) => (holder ? `${account}（${holder}）` : account);
 
 /**
  * 掃描結果，一律 HTTP 200（規劃書第 7 節）。

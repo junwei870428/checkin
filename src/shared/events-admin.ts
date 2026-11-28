@@ -93,6 +93,8 @@ export function scopeCount(scope: Scope, groups: ScopeGroup[], listActive: numbe
 export interface StaffAccount {
   id: string;
   account: string;
+  /** 使用人姓名；舊資料可能是空字串 */
+  holder: string;
   disabled: boolean;
   lockUntil: number;
 }
@@ -101,8 +103,25 @@ export interface StaffAccount {
 export interface StaffSecret {
   id: string;
   account: string;
+  holder: string;
   pin: string;
 }
 
-/** PATCH /api/staff/:id */
+/** 使用人姓名長度上限 */
+export const HOLDER_MAX = 20;
+
+/** POST /api/events/:id/staff：每位使用人產生一組帳號，依順序配發流水號 */
+export interface CreateStaffBody {
+  holders: string[];
+}
+
+/** PATCH /api/staff/:id 的 action；改使用人改送 { holder } */
 export type StaffAction = 'disable' | 'enable' | 'unlock';
+
+/** 驗證並整理使用人姓名，回傳錯誤訊息或整理後的姓名 */
+export function parseHolder(v: unknown): string | { error: string } {
+  const s = typeof v === 'string' ? v.trim() : '';
+  if (!s) return { error: '請填寫使用人姓名' };
+  if (s.length > HOLDER_MAX) return { error: `使用人姓名最多 ${HOLDER_MAX} 字` };
+  return s;
+}

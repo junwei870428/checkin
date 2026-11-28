@@ -106,7 +106,7 @@ describe('GET /api/events/:id/roster', () => {
     const { env, owner, ev, checkin, gift } = await setup();
     const res = await call<EventRoster>(env, 'GET', `/api/events/${ev.id}/roster`, { cookie: owner.cookie });
     expect(res.status).toBe(200);
-    const pass = (at: number, by = 'TEST-01', manual = false) => ({ at, by, manual });
+    const pass = (at: number, by = 'TEST-01', manual = false) => ({ at, by, byHolder: '', manual });
     expect(res.json).toEqual({
       stations: STATIONS(checkin, gift),
       people: [
@@ -120,9 +120,9 @@ describe('GET /api/events/:id/roster', () => {
 
   it('撤銷後重新通過的人只回傳未撤銷的那筆', async () => {
     const { env, owner, ev, checkin } = await setup();
-    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '003', scannedAt: T + 5000, byAccount: 'XMAS-03' });
+    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '003', scannedAt: T + 5000, byAccount: 'XMAS-03', byHolder: '陳小美' });
     const res = await call<EventRoster>(env, 'GET', `/api/events/${ev.id}/roster`, { cookie: owner.cookie });
-    expect(res.json.people.find(p => p.empNo === '003')?.passes).toEqual({ [checkin]: { at: T + 5000, by: 'XMAS-03', manual: false } });
+    expect(res.json.people.find(p => p.empNo === '003')?.passes).toEqual({ [checkin]: { at: T + 5000, by: 'XMAS-03', byHolder: '陳小美', manual: false } });
   });
 });
 

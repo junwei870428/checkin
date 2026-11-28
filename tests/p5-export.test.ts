@@ -13,9 +13,9 @@ const roster: EventRoster = {
   ],
   people: [
     { empNo: '003', name: '陳大同', plant: '台中廠', dept: '人資室', passes: {} },
-    { empNo: '001023', name: '王小明', plant: '台中廠', dept: '資訊室', passes: { a: { at: AT, by: 'XMAS-02', manual: true }, b: { at: AT, by: 'XMAS-01', manual: false } } },
-    { empNo: '002', name: '李小華', plant: '台中廠', dept: '資訊室', passes: { a: { at: AT, by: 'XMAS-01', manual: false } } },
-    { empNo: '004', name: '林美玲', plant: '高雄廠', dept: '資訊室', passes: { a: { at: AT, by: 'XMAS-01', manual: false } } },
+    { empNo: '001023', name: '王小明', plant: '台中廠', dept: '資訊室', passes: { a: { at: AT, by: 'XMAS-02', byHolder: '李小華', manual: true }, b: { at: AT, by: 'XMAS-01', byHolder: '王大明', manual: false } } },
+    { empNo: '002', name: '李小華', plant: '台中廠', dept: '資訊室', passes: { a: { at: AT, by: 'XMAS-01', byHolder: '', manual: false } } },
+    { empNo: '004', name: '林美玲', plant: '高雄廠', dept: '資訊室', passes: { a: { at: AT, by: 'XMAS-01', byHolder: '', manual: false } } },
   ],
 };
 
@@ -42,15 +42,15 @@ describe('buildRosterWorkbook', () => {
   it('每個關卡一張名單，工號維持文字（保留前導零）', () => {
     const ws = roundTrip(roster).Sheets['領取禮品'];
     expect(utils.sheet_to_json(ws, { header: 1, defval: '' })).toEqual([
-      ['廠別', '部門', '工號', '姓名', '狀態', '時間', '處理帳號', '手動處理'],
-      ['台中廠', '人資室', '003', '陳大同', '未通過', '', '', ''],
-      ['台中廠', '資訊室', '001023', '王小明', '已通過', fmtDT(AT), 'XMAS-01', ''],
-      ['台中廠', '資訊室', '002', '李小華', '未通過', '', '', ''],
-      ['高雄廠', '資訊室', '004', '林美玲', '未通過', '', '', ''],
+      ['廠別', '部門', '工號', '姓名', '狀態', '時間', '處理帳號', '處理人員', '手動處理'],
+      ['台中廠', '人資室', '003', '陳大同', '未通過', '', '', '', ''],
+      ['台中廠', '資訊室', '001023', '王小明', '已通過', fmtDT(AT), 'XMAS-01', '王大明', ''],
+      ['台中廠', '資訊室', '002', '李小華', '未通過', '', '', '', ''],
+      ['高雄廠', '資訊室', '004', '林美玲', '未通過', '', '', '', ''],
     ]);
     expect(ws.C3).toMatchObject({ t: 's', v: '001023' });
     expect(utils.sheet_to_json(roundTrip(roster).Sheets['入場報到'], { header: 1 })[2]).toEqual(
-      ['台中廠', '資訊室', '001023', '王小明', '已通過', fmtDT(AT), 'XMAS-02', '是'],
+      ['台中廠', '資訊室', '001023', '王小明', '已通過', fmtDT(AT), 'XMAS-02', '李小華', '是'],
     );
   });
 
