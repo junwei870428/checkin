@@ -1,5 +1,6 @@
 // 名單與報表（F-RPT-2、F-RPT-3）：選關卡、篩選通過狀態、搜尋，畫面最多 300 筆，完整資料請匯出 Excel
 import DownloadIcon from '@mui/icons-material/Download';
+import PrintIcon from '@mui/icons-material/Print';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import {
@@ -30,6 +31,7 @@ import { api, ApiError } from '../../../api';
 import { Loading } from '../../../components/Loading';
 import { useNotify } from '../../../components/notify';
 import { downloadRoster } from '../../../export';
+import { downloadPaperSheet } from '../../../paperSheetDownload';
 import { fmtDT } from '../../../format';
 import type { EventTabProps } from '../EventDetailPage';
 
@@ -46,7 +48,7 @@ export default function RosterTab({ event }: EventTabProps) {
   const [stationId, setStationId] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
-  const [busy, setBusy] = useState<'' | 'reload' | 'export'>('');
+  const [busy, setBusy] = useState<'' | 'reload' | 'export' | 'paper'>('');
 
   const load = useCallback(async () => {
     const r = await api.get<EventRoster>(`/events/${encodeURIComponent(event.id)}/roster`);
@@ -71,13 +73,14 @@ export default function RosterTab({ event }: EventTabProps) {
   }, [roster, station, filter, q]);
 
   // 匯出前重新讀一次名單，檔案內容是當下最新的資料
-  const run = (kind: 'reload' | 'export') => {
+  const run = (kind: 'reload' | 'export' | 'paper') => {
     setBusy(kind);
     load()
-      .then(r => {
+      .then(async r => {
         if (kind === 'export') downloadRoster(event.name, r);
+        if (kind === 'paper') await downloadPaperSheet(event, r);
       })
-      .catch(e => notify(message(e, kind === 'export' ? '匯出失敗，請稍後再試' : '無法載入名單，請稍後再試'), 'error'))
+      .catch(e => notify(message(e, kind === 'reload' ? '無法載入名單，請稍後再試' : '匯出失敗，請稍後再試'), 'error'))
       .finally(() => setBusy(''));
   };
 
@@ -109,6 +112,9 @@ export default function RosterTab({ event }: EventTabProps) {
           <Button startIcon={<RefreshIcon />} onClick={() => run('reload')} disabled={!!busy}>重新整理</Button>
           <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => run('export')} disabled={!!busy}>
             {busy === 'export' ? '匯出中…' : '匯出 Excel'}
+          </Button>
+          <Button variant="outlined" startIcon={<PrintIcon />} onClick={() => run('paper')} disabled={!!busy}>
+            {busy === 'paper' ? '產生中…' : '紙本簽到表'}
           </Button>
         </Stack>
       </Stack>
@@ -156,7 +162,7 @@ export default function RosterTab({ event }: EventTabProps) {
         </Table>
       </TableContainer>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-        只含正式紀錄。匯出的檔案包含「統計」工作表與每個關卡的完整名單。
+        只含正式紀錄。匯出的檔案包含「統計」工作表與每個關卡的完整名單。紙本簽到表是斷網時的備援，建議活動前印好，每個報到櫃台一份。
       </Typography>
     </>
   );
