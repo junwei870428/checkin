@@ -23,6 +23,7 @@ import { RecentList } from '../../components/checkin/RecentList';
 import { ResultOverlay } from '../../components/checkin/ResultOverlay';
 import { phaseAfterScan, recordFromError, recordFromResponse, useRecent, type ScanRecord } from '../../components/checkin/scanRecord';
 import { ScannerPanel } from '../../components/checkin/ScannerPanel';
+import { useWakeLock } from '../../components/checkin/wakeLock';
 import { Loading } from '../../components/Loading';
 import { useNotify } from '../../components/notify';
 
@@ -68,6 +69,7 @@ function ScanScreen({ ctx, station, me }: { ctx: CheckinContext; station: Checki
   const [overlay, setOverlay] = useState<ScanRecord | null>(null);
   const { list, add, markVoided } = useRecent(station.id);
   const closeOverlay = useCallback(() => setOverlay(null), []);
+  useWakeLock();
 
   useEffect(() => {
     const opts = { capture: true };
