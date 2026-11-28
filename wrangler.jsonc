@@ -13,14 +13,12 @@
     {
       "binding": "DB",
       "database_name": "checkin-db",
-      // 正式部署前以 `wrangler d1 create checkin-db` 回傳的 id 取代
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "06afc38e-9355-47e2-b280-09c80922e05a",
       "migrations_dir": "migrations"
     }
   ],
   "triggers": {
     "crons": ["0 * * * *"]
-  }
-  // 自訂網域在第 5 階段部署時加入：
-  // "routes": [{ "pattern": "checkin.example.com", "custom_domain": true }]
+  },
+  "routes": [{ "pattern": "checkin.junwei.me", "custom_domain": true }]
 }
