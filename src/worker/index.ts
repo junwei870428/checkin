@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { apiError, type AppEnv, type Bindings } from './env';
 import { runRetention } from './retention';
+import { auditRoutes } from './routes/audit';
 import { authRoutes } from './routes/auth';
 import { checkinRoutes } from './routes/checkin';
 import { employeeRoutes } from './routes/employees';
@@ -32,6 +33,7 @@ app.route('/', eventRoutes);
 app.route('/', staffRoutes);
 app.route('/', checkinRoutes);
 app.route('/', reportRoutes);
+app.route('/', auditRoutes);
 
 app.notFound(c => apiError(c, 404, 'not_found', '找不到這個 API'));
 app.onError((err, c) => {

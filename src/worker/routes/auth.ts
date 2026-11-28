@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Me } from '../../shared/types';
+import { writeAudit } from '../audit';
 import { adminLogin, clearCookie, issueCookie, requireAuth, staffLogin } from '../auth';
 import { apiError, type AppEnv } from '../env';
 
@@ -18,6 +19,7 @@ export const authRoutes = new Hono<AppEnv>()
     if (!username || !password) return apiError(c, 400, 'bad_request', '請輸入帳號與密碼');
     const r = await adminLogin(c.env, username.trim(), password, Date.now());
     if (!r.ok) return apiError(c, LOGIN_STATUS[r.code], r.code, r.message);
+    await writeAudit(c.env.DB, r.payload.id, 'login');
     await issueCookie(c, r.payload);
     return c.json({ ok: true });
   })

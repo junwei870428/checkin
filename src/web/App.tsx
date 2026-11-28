@@ -13,6 +13,7 @@ const EventsPage = lazy(() => import('./pages/admin/EventsPage'));
 const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
 const EmployeesPage = lazy(() => import('./pages/admin/EmployeesPage'));
 const AccountsPage = lazy(() => import('./pages/admin/AccountsPage'));
+const AuditPage = lazy(() => import('./pages/admin/AuditPage'));
 const StationsPage = lazy(() => import('./pages/checkin/StationsPage'));
 const ScanPage = lazy(() => import('./pages/checkin/ScanPage'));
 
@@ -63,6 +64,7 @@ function AppRoutes() {
           <Route path="events/:id" element={<EventDetailPage />} />
           <Route path="employees" element={<AdminOnly><EmployeesPage /></AdminOnly>} />
           <Route path="accounts" element={<AdminOnly><AccountsPage /></AdminOnly>} />
+          <Route path="audit" element={<AdminOnly><AuditPage /></AdminOnly>} />
           <Route path="*" element={<Navigate to="/admin/events" replace />} />
         </Route>
         <Route path="/checkin" element={<Guard type="staff"><Outlet /></Guard>}>

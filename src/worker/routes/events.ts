@@ -8,6 +8,7 @@ import {
   type CreateEventBody, type EventListItem, type MembersResult, type ScopeGroup, type ScopeOptions, type StationInput, type UpdateEventBody,
 } from '../../shared/events-admin';
 import { EVENT_COLUMNS, loadEventFor, toEventRecord, type EventRow } from '../access';
+import { audit, eventLabel } from '../audit';
 import { requireAuth, requireUser } from '../auth';
 import { recalcStatements } from '../counts';
 import { newId } from '../crypto';
@@ -228,6 +229,7 @@ export const eventRoutes = new Hono<AppEnv>()
       if (String((e as Error).message).includes('UNIQUE constraint failed: events.code')) return codeTaken();
       throw e;
     }
+    await audit(c, 'event_create', eventLabel(b));
     return c.json({ id }, 201);
   })
 
@@ -295,6 +297,7 @@ export const eventRoutes = new Hono<AppEnv>()
       ),
       ...(scopeChanged ? recalcStatements(db, ev.id, u.scope) : []),
     ]);
+    await audit(c, 'event_update', eventLabel({ name: u.name, code: ev.code }));
     return c.json({ ok: true });
   })
 
@@ -321,6 +324,7 @@ export const eventRoutes = new Hono<AppEnv>()
       unknown: unknown.map(x => x.emp_no),
       active: (res.at(-1)!.results[0] as { n: number }).n,
     };
+    await audit(c, 'event_members', `${eventLabel(ev)}：${empNos.length} 人`);
     return c.json(out);
   })
 
@@ -334,6 +338,7 @@ export const eventRoutes = new Hono<AppEnv>()
       return bad(c, phase === 'ended' ? '活動已結束，不能切換演練模式' : '活動已開始，不能切換演練模式');
     }
     await c.env.DB.prepare('UPDATE events SET rehearsal = ? WHERE id = ?').bind(on ? 1 : 0, r.event.id).run();
+    await audit(c, on ? 'event_rehearsal_on' : 'event_rehearsal_off', eventLabel(r.event));
     return c.json({ rehearsal: on });
   })
 
@@ -344,6 +349,7 @@ export const eventRoutes = new Hono<AppEnv>()
     if (eventPhase(r.event, now) === 'ended') return bad(c, '活動已經結束');
     // 尚未開始就結束時，開始時間一併設為現在，避免開始晚於結束
     await c.env.DB.prepare('UPDATE events SET end_at = ?, start_at = MIN(start_at, ?) WHERE id = ?').bind(now, now, r.event.id).run();
+    await audit(c, 'event_close', eventLabel(r.event));
     return c.json({ endAt: now });
   })
 
@@ -355,6 +361,7 @@ export const eventRoutes = new Hono<AppEnv>()
       db.prepare('DELETE FROM scans WHERE event_id = ? AND rehearsal = 1').bind(r.event.id),
       db.prepare('UPDATE events SET rehearsal = 0 WHERE id = ?').bind(r.event.id),
     ]);
+    await audit(c, 'event_clear_rehearsal', `${eventLabel(r.event)}：${del.meta.changes} 筆`);
     return c.json({ deleted: del.meta.changes });
   })
 
@@ -367,6 +374,7 @@ export const eventRoutes = new Hono<AppEnv>()
       ['scans', 'staff_accounts', 'event_members', 'stations'].map(t => db.prepare(`DELETE FROM ${t} WHERE event_id = ?`).bind(id))
         .concat(db.prepare('DELETE FROM events WHERE id = ?').bind(id)),
     );
+    await audit(c, 'event_delete', eventLabel(r.event));
     return c.json({ ok: true });
   })
 
