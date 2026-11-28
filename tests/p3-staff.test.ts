@@ -20,7 +20,7 @@ const login = (s: Setup, account: string, pin: string) => call(s.env, 'POST', '/
 describe('POST /api/events/:id/staff', () => {
   it('批次產生帳號與 6 位數 PIN，PIN 可以直接登入（帳號不分大小寫）', async () => {
     const s = await setup();
-    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { count: 3 } });
+    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { holders: ['王小明', '李小華', '陳大同'] } });
     expect(res.status).toBe(201);
     expect(res.json.map(x => x.account)).toEqual(['XMAS-01', 'XMAS-02', 'XMAS-03']);
     for (const x of res.json) expect(x.pin).toMatch(/^\d{6}$/);
@@ -30,36 +30,50 @@ describe('POST /api/events/:id/staff', () => {
   it('流水號接在目前最大號之後，超過 99 自然變成 3 位數', async () => {
     const s = await setup();
     for (const account of ['XMAS-01', 'XMAS-98']) await seedStaff(s.env, { eventId: s.ev.id, account });
-    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { count: 3 } });
+    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { holders: ['王小明', '李小華', '陳大同'] } });
     expect(res.json.map(x => x.account)).toEqual(['XMAS-99', 'XMAS-100', 'XMAS-101']);
     expect((await list(s)).map(x => x.account)).toEqual(['XMAS-01', 'XMAS-98', 'XMAS-99', 'XMAS-100', 'XMAS-101']);
   });
 
   it('一次可產生 50 組', async () => {
     const s = await setup();
-    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { count: 50 } });
+    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { holders: Array.from({ length: 50 }, (_, i) => `人員${i + 1}`) } });
     expect(res.status).toBe(201);
     expect(res.json.at(-1)!.account).toBe('XMAS-50');
     expect(await list(s)).toHaveLength(50);
   });
 
-  it.each([0, 51, 2.5, '3'])('數量 %j 回 400', async count => {
+  it('每組帳號依順序記下使用人，姓名前後空白會去掉', async () => {
     const s = await setup();
-    const res = await call(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { count } });
+    const res = await call<StaffSecret[]>(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { holders: [' 王小明 ', '李小華'] } });
+    expect(res.json.map(x => [x.account, x.holder])).toEqual([['XMAS-01', '王小明'], ['XMAS-02', '李小華']]);
+    expect((await list(s)).map(x => x.holder)).toEqual(['王小明', '李小華']);
+  });
+
+  it.each([
+    ['沒有 holders', { count: 3 }],
+    ['空陣列', { holders: [] }],
+    ['超過 50 組', { holders: Array.from({ length: 51 }, () => '王小明') }],
+    ['有一組是空白', { holders: ['王小明', '  '] }],
+    ['姓名超過 20 字', { holders: ['王'.repeat(21)] }],
+    ['姓名不是字串', { holders: [123] }],
+  ])('%s 回 400，不產生任何帳號', async (_, body) => {
+    const s = await setup();
+    const res = await call(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body });
     expect(res.status).toBe(400);
     expect(await list(s)).toEqual([]);
   });
 
   it('活動已結束不能產生', async () => {
     const s = await setup({ endAt: Date.now() - HOUR });
-    const res = await call(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { count: 1 } });
+    const res = await call(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie, body: { holders: ['王小明'] } });
     expect(res.status).toBe(400);
     expect(res.json.error.message).toBe('活動已結束，報到人員帳號已失效');
   });
 
   it('其他承辦人的活動回 404', async () => {
     const s = await setup();
-    const res = await call(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.other.cookie, body: { count: 1 } });
+    const res = await call(s.env, 'POST', `/api/events/${s.ev.id}/staff`, { cookie: s.other.cookie, body: { holders: ['王小明'] } });
     expect(res.status).toBe(404);
     expect(await list(s)).toEqual([]);
   });
@@ -72,7 +86,7 @@ describe('GET /api/events/:id/staff', () => {
     await seedStaff(s.env, { eventId: s.ev.id, account: 'XMAS-02', disabled: true });
     const res = await call<StaffAccount[]>(s.env, 'GET', `/api/events/${s.ev.id}/staff`, { cookie: s.owner.cookie });
     expect(res.status).toBe(200);
-    expect(res.json[0]).toEqual({ id: a.id, account: 'XMAS-01', disabled: false, lockUntil: 0 });
+    expect(res.json[0]).toEqual({ id: a.id, account: 'XMAS-01', holder: '', disabled: false, lockUntil: 0 });
     expect(res.json[1].disabled).toBe(true);
   });
 
@@ -124,7 +138,7 @@ describe('PATCH /api/staff/:id', () => {
     const a = await seedStaff(s.env, { eventId: s.ev.id, account: 'XMAS-01', pin: '111111' });
     const off = await call<StaffAccount>(s.env, 'PATCH', `/api/staff/${a.id}`, { cookie: s.owner.cookie, body: { action: 'disable' } });
     expect(off.status).toBe(200);
-    expect(off.json).toEqual({ id: a.id, account: 'XMAS-01', disabled: true, lockUntil: 0 });
+    expect(off.json).toEqual({ id: a.id, account: 'XMAS-01', holder: '', disabled: true, lockUntil: 0 });
     expect((await call(s.env, 'GET', '/api/me', { cookie: a.cookie })).status).toBe(401);
     expect((await login(s, 'XMAS-01', '111111')).json.error.code).toBe('disabled');
 
@@ -149,5 +163,15 @@ describe('PATCH /api/staff/:id', () => {
     expect((await call(s.env, 'PATCH', `/api/staff/${a.id}`, { cookie: s.owner.cookie, body: { action: 'delete' } })).status).toBe(400);
     expect((await call(s.env, 'PATCH', `/api/staff/${a.id}`, { cookie: s.other.cookie, body: { action: 'disable' } })).status).toBe(404);
     expect((await list(s))[0].disabled).toBe(false);
+  });
+
+  it('更換使用人：不會登出正在使用的裝置，空白姓名回 400', async () => {
+    const s = await setup();
+    const a = await seedStaff(s.env, { eventId: s.ev.id, account: 'XMAS-01', holder: '王小明' });
+    const res = await call<StaffAccount>(s.env, 'PATCH', `/api/staff/${a.id}`, { cookie: s.owner.cookie, body: { holder: ' 李小華 ' } });
+    expect(res.json).toMatchObject({ account: 'XMAS-01', holder: '李小華', disabled: false });
+    expect((await call(s.env, 'GET', '/api/me', { cookie: a.cookie })).status).toBe(200);
+    expect((await call(s.env, 'PATCH', `/api/staff/${a.id}`, { cookie: s.owner.cookie, body: { holder: ' ' } })).status).toBe(400);
+    expect((await list(s))[0].holder).toBe('李小華');
   });
 });

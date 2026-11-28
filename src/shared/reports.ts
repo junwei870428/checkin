@@ -45,6 +45,8 @@ export interface EventBreakdown {
 export interface RosterPass {
   at: number;
   by: string;
+  /** 掃描當下的帳號使用人，舊資料是空字串 */
+  byHolder: string;
   manual: boolean;
 }
 

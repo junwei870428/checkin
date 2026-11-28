@@ -231,28 +231,28 @@ export async function seedEmployees(
   ));
 }
 
-export async function seedStaff(env: Bindings, o: { eventId: string; account: string; pin?: string; disabled?: boolean }) {
+export async function seedStaff(env: Bindings, o: { eventId: string; account: string; holder?: string; pin?: string; disabled?: boolean }) {
   const id = newId();
   const account = o.account.toUpperCase();
   const pin = o.pin ?? '123456';
   const salt = newSalt();
   await env.DB.prepare(
-    'INSERT INTO staff_accounts (id, event_id, account, pin_salt, pin_hash, disabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).bind(id, o.eventId, account, salt, await hashSecret(env.PEPPER, salt, pin), o.disabled ? 1 : 0, Date.now()).run();
+    'INSERT INTO staff_accounts (id, event_id, account, holder, pin_salt, pin_hash, disabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind(id, o.eventId, account, o.holder ?? '', salt, await hashSecret(env.PEPPER, salt, pin), o.disabled ? 1 : 0, Date.now()).run();
   return { id, account, pin, cookie: await cookieFor(env, { t: 's', id }) };
 }
 
 /** 直接寫入一筆掃描紀錄；正式且未撤銷時 trigger 會把 passed_count 加 1，與實際掃描相同 */
 export async function seedScan(
   env: Bindings,
-  o: { eventId: string; stationId: string; empNo: string; rehearsal?: boolean; voided?: boolean; manual?: boolean; byAccount?: string; scannedAt?: number },
+  o: { eventId: string; stationId: string; empNo: string; rehearsal?: boolean; voided?: boolean; manual?: boolean; byAccount?: string; byHolder?: string; scannedAt?: number },
 ) {
   const id = newId();
   const at = o.scannedAt ?? Date.now();
   await env.DB.prepare(
-    `INSERT INTO scans (id, event_id, station_id, emp_no, rehearsal, scanned_at, by_account, device, manual, voided_at, voided_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'desktop', ?, ?, ?)`,
-  ).bind(id, o.eventId, o.stationId, o.empNo, o.rehearsal ? 1 : 0, at, o.byAccount ?? 'TEST-01', o.manual ? 1 : 0,
+    `INSERT INTO scans (id, event_id, station_id, emp_no, rehearsal, scanned_at, by_account, by_holder, device, manual, voided_at, voided_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'desktop', ?, ?, ?)`,
+  ).bind(id, o.eventId, o.stationId, o.empNo, o.rehearsal ? 1 : 0, at, o.byAccount ?? 'TEST-01', o.byHolder ?? '', o.manual ? 1 : 0,
     o.voided ? at : null, o.voided ? (o.byAccount ?? 'TEST-01') : null).run();
   return id;
 }

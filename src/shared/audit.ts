@@ -16,6 +16,7 @@ export const AUDIT_LABELS = {
   event_delete: '刪除活動',
   staff_create: '產生報到帳號',
   staff_reset_pin: '重設 PIN 碼',
+  staff_rename: '更換報到帳號使用人',
   staff_disable: '停用報到帳號',
   staff_enable: '啟用報到帳號',
   staff_unlock: '解除報到帳號鎖定',

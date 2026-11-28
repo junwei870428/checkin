@@ -46,7 +46,7 @@ describe('操作紀錄', () => {
     const { env, admin, logs } = await setup();
     const ev = await seedEvent(env, { ownerId: admin.id, name: '尾牙', code: 'XMAS' });
     const st = await seedStaff(env, { eventId: ev.id, account: 'XMAS-01' });
-    await call(env, 'POST', `/api/events/${ev.id}/staff`, { cookie: admin.cookie, body: { count: 3 } });
+    await call(env, 'POST', `/api/events/${ev.id}/staff`, { cookie: admin.cookie, body: { holders: ['甲', '乙', '丙'] } });
     await call(env, 'PATCH', `/api/staff/${st.id}`, { cookie: admin.cookie, body: { action: 'disable' } });
     expect((await logs()).map(l => [l.action, l.target])).toEqual([
       ['staff_disable', 'XMAS-01'],

@@ -19,7 +19,7 @@ async function setup(o: { startAt?: number; endAt?: number; rehearsal?: boolean;
   const owner = await seedUser(env);
   const ev = await seedEvent(env, { ownerId: owner.id, name: '聖誕晚會', code: 'XMAS', ...o });
   await seedEmployees(env, [WANG, LEE, { empNo: '003001', name: '陳停用', active: false }]);
-  const staff = await seedStaff(env, { eventId: ev.id, account: 'XMAS-01' });
+  const staff = await seedStaff(env, { eventId: ev.id, account: 'XMAS-01', holder: '王小明' });
   const [checkin, gift] = ev.stationIds as [string, string];
   const scan = (body: Partial<ScanRequest> | Record<string, unknown>, cookie = staff.cookie) =>
     call<ScanResponse & Partial<ApiErrorBody>>(env, 'POST', '/api/checkin/scan', { body, cookie });
@@ -46,13 +46,13 @@ describe('POST /api/checkin/scan', () => {
       reason: null,
       rehearsal: false,
       employee: WANG,
-      scan: { id: expect.any(String), scannedAt: expect.any(Number), byAccount: 'XMAS-01' },
+      scan: { id: expect.any(String), scannedAt: expect.any(Number), byAccount: 'XMAS-01', byHolder: '王小明' },
       previous: null,
       passedCount: 1,
     });
     const rows = await scanRows(env);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: res.json.scan!.id, emp_no: '001023', station_id: checkin, rehearsal: 0, by_account: 'XMAS-01', device: 'desktop', manual: 0, voided_at: null });
+    expect(rows[0]).toMatchObject({ id: res.json.scan!.id, emp_no: '001023', station_id: checkin, rehearsal: 0, by_account: 'XMAS-01', by_holder: '王小明', device: 'desktop', manual: 0, voided_at: null });
     expect(await passedCount(env, checkin)).toBe(1);
   });
 
@@ -74,7 +74,7 @@ describe('POST /api/checkin/scan', () => {
       rehearsal: false,
       employee: WANG,
       scan: null,
-      previous: { scannedAt: first.json.scan!.scannedAt, byAccount: 'XMAS-01' },
+      previous: { scannedAt: first.json.scan!.scannedAt, byAccount: 'XMAS-01', byHolder: '王小明' },
       passedCount: 1,
     });
     expect(await scanRows(env)).toHaveLength(1);

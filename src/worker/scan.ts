@@ -48,7 +48,7 @@ export function decideScan(s: ScanSnapshot, now: number): ScanDecision {
 
   const mine = s.activeScans.filter(x => x.rehearsal === rehearsal);
   const prev = mine.find(x => x.stationId === s.station.id);
-  if (prev) return { kind: 'dup', rehearsal, employee, previous: { scannedAt: prev.scannedAt, byAccount: prev.byAccount } };
+  if (prev) return { kind: 'dup', rehearsal, employee, previous: { scannedAt: prev.scannedAt, byAccount: prev.byAccount, byHolder: prev.byHolder } };
 
   if (s.station.kind === 'gift' && s.station.requireCheckin && !mine.some(x => x.stationKind === 'checkin')) {
     return { kind: 'reject', reason: 'need_checkin', rehearsal, employee };

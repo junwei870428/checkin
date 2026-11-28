@@ -20,7 +20,7 @@ const GIFT = { id: 'gift', kind: 'gift', requireCheckin: true } as const;
 const PRE_START = { startAt: NOW + HOUR, endAt: NOW + 2 * HOUR };
 
 function scan(o: Partial<ActiveScan> = {}): ActiveScan {
-  return { stationId: 'ck', stationKind: 'checkin', rehearsal: false, scannedAt: NOW - 60_000, byAccount: 'XMAS-03', ...o };
+  return { stationId: 'ck', stationKind: 'checkin', rehearsal: false, scannedAt: NOW - 60_000, byAccount: 'XMAS-03', byHolder: '王小明', ...o };
 }
 
 describe('decideScan', () => {
@@ -85,7 +85,7 @@ describe('decideScan', () => {
 
   it('同一關卡已有紀錄時回傳第一次通過的時間與帳號', () => {
     const s = snap({ activeScans: [scan({ scannedAt: 123, byAccount: 'XMAS-03' })] });
-    expect(decideScan(s, NOW)).toEqual({ kind: 'dup', rehearsal: false, employee: EMP, previous: { scannedAt: 123, byAccount: 'XMAS-03' } });
+    expect(decideScan(s, NOW)).toEqual({ kind: 'dup', rehearsal: false, employee: EMP, previous: { scannedAt: 123, byAccount: 'XMAS-03', byHolder: '王小明' } });
   });
 
   it('其他關卡的紀錄不算重複', () => {

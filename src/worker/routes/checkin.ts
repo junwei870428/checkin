@@ -23,7 +23,7 @@ function staffOf(c: Context<AppEnv>) {
 }
 
 const eventStmt = (db: D1Database, eventId: string) => db.prepare(`SELECT ${EVENT_COLUMNS} FROM events WHERE id = ?`).bind(eventId);
-const accountStmt = (db: D1Database, staffId: string) => db.prepare('SELECT account FROM staff_accounts WHERE id = ?').bind(staffId);
+const accountStmt = (db: D1Database, staffId: string) => db.prepare('SELECT account, holder FROM staff_accounts WHERE id = ?').bind(staffId);
 
 /** 關卡人數：正式讀 passed_count 快取；演練不快取，以 COUNT 計算（只在活動開始前發生） */
 function countStmt(db: D1Database, stationId: string, rehearsal: boolean) {
@@ -118,7 +118,7 @@ export const checkinRoutes = new Hono<AppEnv>()
       db.prepare('SELECT emp_no, name, dept, plant, active FROM employees WHERE emp_no = ?').bind(code),
       db.prepare('SELECT 1 FROM event_members WHERE event_id = ? AND emp_no = ?').bind(a.eventId, code),
       db.prepare(
-        `SELECT s.station_id, st.kind, s.rehearsal, s.scanned_at, s.by_account
+        `SELECT s.station_id, st.kind, s.rehearsal, s.scanned_at, s.by_account, s.by_holder
            FROM stations st JOIN scans s ON s.station_id = st.id
           WHERE st.event_id = ? AND s.emp_no = ? AND s.voided_at IS NULL`,
       ).bind(a.eventId, code),
@@ -127,7 +127,7 @@ export const checkinRoutes = new Hono<AppEnv>()
     if (!station) return apiError(c, 400, 'bad_station', '這個關卡不屬於本活動');
     const ev = toEventRecord(first<EventRow>(evRes)!);
     const emp = first<{ emp_no: string; name: string; dept: string; plant: string; active: number }>(empRes);
-    const scans = scansRes.results as Array<{ station_id: string; kind: StationKind; rehearsal: number; scanned_at: number; by_account: string }>;
+    const scans = scansRes.results as Array<{ station_id: string; kind: StationKind; rehearsal: number; scanned_at: number; by_account: string; by_holder: string }>;
 
     const now = Date.now();
     const d = decideScan({
@@ -141,6 +141,7 @@ export const checkinRoutes = new Hono<AppEnv>()
         rehearsal: x.rehearsal === 1,
         scannedAt: x.scanned_at,
         byAccount: x.by_account,
+        byHolder: x.by_holder,
       })),
     }, now);
 
@@ -151,27 +152,27 @@ export const checkinRoutes = new Hono<AppEnv>()
 
     // 多台裝置同時掃到同一人時由部分唯一索引擋下，寫入 0 列就回傳先寫入的那筆
     const id = newId();
-    const account = first<{ account: string }>(accRes)!.account;
+    const { account, holder } = first<{ account: string; holder: string }>(accRes)!;
     const rehearsal = d.rehearsal ? 1 : 0;
     const [ins, activeRes, countRes] = await db.batch([
       db.prepare(
-        `INSERT INTO scans (id, event_id, station_id, emp_no, rehearsal, scanned_at, by_account, device, manual)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-      ).bind(id, a.eventId, stationId, d.employee.empNo, rehearsal, now, account, device, manual ? 1 : 0),
-      db.prepare('SELECT scanned_at, by_account FROM scans WHERE station_id = ? AND emp_no = ? AND rehearsal = ? AND voided_at IS NULL')
+        `INSERT INTO scans (id, event_id, station_id, emp_no, rehearsal, scanned_at, by_account, by_holder, device, manual)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      ).bind(id, a.eventId, stationId, d.employee.empNo, rehearsal, now, account, holder, device, manual ? 1 : 0),
+      db.prepare('SELECT scanned_at, by_account, by_holder FROM scans WHERE station_id = ? AND emp_no = ? AND rehearsal = ? AND voided_at IS NULL')
         .bind(stationId, d.employee.empNo, rehearsal),
       countStmt(db, stationId, d.rehearsal),
     ]);
     const passedCount = first<{ n: number }>(countRes)!.n;
     // 只能看是否為 0：D1 的 changes 含 trigger 改到的列，正式紀錄寫入時是 2
     if (ins.meta.changes === 0) {
-      const prev = first<{ scanned_at: number; by_account: string }>(activeRes)!;
-      const previous = { scannedAt: prev.scanned_at, byAccount: prev.by_account };
+      const prev = first<{ scanned_at: number; by_account: string; by_holder: string }>(activeRes)!;
+      const previous = { scannedAt: prev.scanned_at, byAccount: prev.by_account, byHolder: prev.by_holder };
       return c.json(toResponse({ kind: 'dup', rehearsal: d.rehearsal, employee: d.employee, previous }, passedCount));
     }
     const body: ScanResponse = {
       status: 'ok', reason: null, rehearsal: d.rehearsal, employee: d.employee,
-      scan: { id, scannedAt: now, byAccount: account }, previous: null, passedCount,
+      scan: { id, scannedAt: now, byAccount: account, byHolder: holder }, previous: null, passedCount,
     };
     return c.json(body);
   })

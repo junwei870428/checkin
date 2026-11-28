@@ -1,6 +1,6 @@
 // 一次掃描的結果：結果畫面與最近紀錄共用同一份資料
 import { useCallback, useEffect, useState } from 'react';
-import type { CheckinPerson, CheckinStation, ScanReason, ScanResponse } from '../../../shared/checkin';
+import { staffLabel, type CheckinPerson, type CheckinStation, type ScanReason, type ScanResponse } from '../../../shared/checkin';
 import type { EventPhase } from '../../../shared/event';
 import { fmtDT } from '../../format';
 
@@ -52,7 +52,7 @@ export function recordFromResponse(
     case 'ok':
       return { ...base, status: 'ok', title: `${station.name}完成`, detail: null, scanId: res.scan.id };
     case 'dup':
-      return { ...base, status: 'dup', title: `此人已${station.name}`, detail: `${fmtDT(res.previous.scannedAt)} 由 ${res.previous.byAccount} 處理` };
+      return { ...base, status: 'dup', title: `此人已${station.name}`, detail: `${fmtDT(res.previous.scannedAt)} 由 ${staffLabel(res.previous.byAccount, res.previous.byHolder)} 處理` };
     case 'error': {
       let detail: string | null = null;
       if (res.reason === 'not_found') detail = `讀到的內容：${attempt.code}`;

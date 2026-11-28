@@ -55,10 +55,10 @@ export function buildRosterWorkbook(r: EventRoster): WorkBook {
   for (const s of r.stations) {
     const rows = r.people.map(p => {
       const x = p.passes[s.id];
-      return [p.plant, p.dept, p.empNo, p.name, x ? '已通過' : '未通過', x ? fmtDT(x.at) : '', x?.by ?? '', x?.manual ? '是' : ''];
+      return [p.plant, p.dept, p.empNo, p.name, x ? '已通過' : '未通過', x ? fmtDT(x.at) : '', x?.by ?? '', x?.byHolder ?? '', x?.manual ? '是' : ''];
     });
-    const ws = utils.aoa_to_sheet([['廠別', '部門', '工號', '姓名', '狀態', '時間', '處理帳號', '手動處理'], ...rows]);
-    ws['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 8 }];
+    const ws = utils.aoa_to_sheet([['廠別', '部門', '工號', '姓名', '狀態', '時間', '處理帳號', '處理人員', '手動處理'], ...rows]);
+    ws['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 8 }];
     utils.book_append_sheet(wb, ws, sheetName(s.name, used));
   }
   return wb;
