@@ -1,4 +1,4 @@
-// 後台外框：系統管理員有「活動／員工資料／系統帳號」分頁，承辦人只看活動
+// 後台外框：系統管理員有「活動／員工資料／系統帳號／操作紀錄」分頁，承辦人只看活動
 import LogoutIcon from '@mui/icons-material/Logout';
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
 import { AppBar, Box, Chip, Container, IconButton, Tab, Tabs, Toolbar, Tooltip, Typography } from '@mui/material';
@@ -11,6 +11,7 @@ const TABS = [
   { to: '/admin/events', label: '活動' },
   { to: '/admin/employees', label: '員工資料' },
   { to: '/admin/accounts', label: '系統帳號' },
+  { to: '/admin/audit', label: '操作紀錄' },
 ];
 
 export default function AdminLayout() {

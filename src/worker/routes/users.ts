@@ -3,6 +3,7 @@
 import { Hono } from 'hono';
 import { USERNAME_HINT, USERNAME_PATTERN, type PasswordIssued, type UserAccount } from '../../shared/employees';
 import type { Role } from '../../shared/types';
+import { audit } from '../audit';
 import { requireAuth, requireUser } from '../auth';
 import { genPassword, hashSecret, newId, newSalt } from '../crypto';
 import { apiError, type AppEnv } from '../env';
@@ -27,6 +28,8 @@ const toAccount = (r: UserRow): UserAccount => ({
   createdAt: r.created_at,
 });
 
+const userLabel = (r: UserRow) => `${r.name}（${r.username}）`;
+
 export const userRoutes = new Hono<AppEnv>()
   .get('/users', requireAuth, requireUser(['admin']), async c => {
     const { results } = await c.env.DB.prepare(`SELECT ${USER_COLUMNS} FROM users ORDER BY role, rowid`).all<UserRow>();
@@ -45,6 +48,7 @@ export const userRoutes = new Hono<AppEnv>()
        ON CONFLICT(username) DO NOTHING RETURNING ${USER_COLUMNS}`,
     ).bind(newId(), username, name, salt, await hashSecret(c.env.PEPPER, salt, password), Date.now()).first<UserRow>();
     if (!row) return apiError(c, 409, 'username_taken', '這個帳號已存在');
+    await audit(c, 'user_create', userLabel(row));
     const res: PasswordIssued = { user: toAccount(row), password };
     return c.json(res, 201);
   })
@@ -57,6 +61,7 @@ export const userRoutes = new Hono<AppEnv>()
        RETURNING ${USER_COLUMNS}`,
     ).bind(salt, await hashSecret(c.env.PEPPER, salt, password), c.req.param('id')).first<UserRow>();
     if (!row) return apiError(c, 404, 'not_found', '找不到這個帳號');
+    await audit(c, 'user_reset_password', userLabel(row));
     const res: PasswordIssued = { user: toAccount(row), password };
     return c.json(res);
   })
@@ -71,5 +76,6 @@ export const userRoutes = new Hono<AppEnv>()
         : `UPDATE users SET disabled = 0 WHERE id = ? RETURNING ${USER_COLUMNS}`,
     ).bind(id).first<UserRow>();
     if (!row) return apiError(c, 404, 'not_found', '找不到這個帳號');
+    await audit(c, b.disabled ? 'user_disable' : 'user_enable', userLabel(row));
     return c.json(toAccount(row));
   });

@@ -4,6 +4,7 @@ import { Hono, type Context } from 'hono';
 import { eventPhase } from '../../shared/event';
 import { STAFF_BATCH_MAX, type StaffAccount, type StaffAction, type StaffSecret } from '../../shared/events-admin';
 import { loadEventFor, type EventRecord } from '../access';
+import { audit, eventLabel } from '../audit';
 import { requireAuth, requireUser } from '../auth';
 import { genPin, hashSecret, newId, newSalt } from '../crypto';
 import { apiError, type AppEnv } from '../env';
@@ -89,6 +90,7 @@ export const staffRoutes = new Hono<AppEnv>()
        SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.account'), json_extract(value, '$.salt'), json_extract(value, '$.hash'), ?
          FROM json_each(?)`,
     ).bind(ev.id, now, JSON.stringify(rows)).run();
+    await audit(c, 'staff_create', `${eventLabel(ev)}：${count} 組`);
     return c.json(batch, 201);
   })
 
@@ -101,6 +103,7 @@ export const staffRoutes = new Hono<AppEnv>()
     await c.env.DB.prepare(
       'UPDATE staff_accounts SET pin_salt = ?, pin_hash = ?, session_ver = session_ver + 1, fails = 0, lock_until = 0 WHERE id = ?',
     ).bind(salt, await hashSecret(c.env.PEPPER, salt, pin), r.staff.id).run();
+    await audit(c, 'staff_reset_pin', r.staff.account);
     const out: StaffSecret = { id: r.staff.id, account: r.staff.account, pin };
     return c.json(out);
   })
@@ -112,5 +115,6 @@ export const staffRoutes = new Hono<AppEnv>()
     if (!Object.hasOwn(ACTION_SQL, action)) return apiError(c, 400, 'bad_request', '操作必須是 disable、enable 或 unlock');
     const row = await c.env.DB.prepare(`UPDATE staff_accounts SET ${ACTION_SQL[action as StaffAction]} WHERE id = ? RETURNING ${STAFF_COLUMNS}`)
       .bind(r.staff.id).first<StaffRow>();
+    await audit(c, `staff_${action as StaffAction}` as const, r.staff.account);
     return c.json(toStaffAccount(row!));
   });
