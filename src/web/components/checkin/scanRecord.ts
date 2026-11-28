@@ -4,7 +4,8 @@ import { staffLabel, type CheckinPerson, type CheckinStation, type ScanReason, t
 import type { EventPhase } from '../../../shared/event';
 import { fmtDT } from '../../format';
 
-export type ScanStatus = ScanResponse['status'];
+/** queued：離線時先記在這台手機，恢復連線後補送 */
+export type ScanStatus = ScanResponse['status'] | 'queued';
 
 export interface ScanRecord {
   id: string;
@@ -21,6 +22,8 @@ export interface ScanRecord {
   rehearsal: boolean;
   /** 通過的紀錄才有，撤銷用 */
   scanId: string | null;
+  /** 送給伺服器的紀錄編號，離線補送後用來找回這一筆 */
+  clientId?: string;
   voided: boolean;
 }
 
@@ -102,5 +105,10 @@ export function useRecent(stationId: string) {
     (scanId: string) => setList(l => l.map(r => (r.scanId === scanId ? { ...r, voided: true } : r))),
     [],
   );
-  return { list, add, markVoided };
+  /** 依 clientId 更新一筆（離線補送的結果）；不在這個關卡的清單裡就略過 */
+  const update = useCallback(
+    (clientId: string, patch: Partial<ScanRecord>) => setList(l => l.map(r => (r.clientId === clientId ? { ...r, ...patch } : r))),
+    [],
+  );
+  return { list, add, markVoided, update };
 }

@@ -22,6 +22,21 @@ export interface ScanRequest {
   code: string;
   manual?: boolean;
   device?: Device;
+  /** 裝置產生的紀錄編號，同一筆重送只會記一次 */
+  clientId?: string;
+  /** 補送離線紀錄時帶刷卡當下的時間（已用伺服器時間校正），沒帶就是伺服器現在時間 */
+  scannedAt?: number;
+}
+
+/** GET /api/checkin/passed?after=：各關卡 rowid 大於 after 的有效紀錄，給離線判斷用 */
+export interface PassedSnapshot {
+  /** 下次查詢帶的 after */
+  cursor: number;
+  /** 這次比對的是演練紀錄還是正式紀錄 */
+  rehearsal: boolean;
+  serverNow: number;
+  /** [關卡 id, 工號] */
+  items: Array<[string, string]>;
 }
 
 export interface ScanRef {

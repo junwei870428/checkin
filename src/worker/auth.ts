@@ -10,6 +10,9 @@ export const MAX_FAILS = 5;
 export const LOCK_MS = 15 * 60_000;
 export const USER_SESSION_MS = 12 * 3600_000;
 export const STAFF_SESSION_MS = 24 * 3600_000;
+/** 活動結束後還能補送離線紀錄的時間；只接受 /api/checkin/scan，且掃描時間必須在活動結束前 */
+export const STAFF_GRACE_MS = 2 * 3600_000;
+const REPLAY_PATH = '/api/checkin/scan';
 
 export interface SessionPayload {
   t: 'u' | 's';
@@ -123,7 +126,7 @@ export async function staffLogin(env: Bindings, account: string, pin: string, no
   if (r.row.disabled) return { ok: false, code: 'disabled', message: '此帳號已停用，請洽活動承辦人' };
   const endAt = row!.end_at;
   if (endAt <= now) return { ok: false, code: 'ended', message: '活動已結束，報到帳號已失效' };
-  return { ok: true, payload: { t: 's', id: r.row.id, ver: r.row.session_ver, exp: Math.min(endAt, now + STAFF_SESSION_MS) } };
+  return { ok: true, payload: { t: 's', id: r.row.id, ver: r.row.session_ver, exp: Math.min(endAt + STAFF_GRACE_MS, now + STAFF_SESSION_MS) } };
 }
 
 export async function issueCookie(c: Parameters<MiddlewareHandler<AppEnv>>[0], p: SessionPayload) {
@@ -161,7 +164,8 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
       'SELECT s.event_id, s.disabled, s.session_ver, e.end_at FROM staff_accounts s JOIN events e ON e.id = s.event_id WHERE s.id = ?',
     ).bind(p.id).first<{ event_id: string; disabled: number; session_ver: number; end_at: number }>();
     if (!s || s.disabled || s.session_ver !== p.ver) return unauth();
-    if (s.end_at <= now) return unauth('活動已結束，報到帳號已失效');
+    // 活動結束後的寬限時間內只能補送離線紀錄，其他 API 一律視為已失效
+    if (s.end_at + STAFF_GRACE_MS <= now || (s.end_at <= now && c.req.path !== REPLAY_PATH)) return unauth('活動已結束，報到帳號已失效');
     c.set('auth', { t: 's', id: p.id, eventId: s.event_id });
   }
   await next();

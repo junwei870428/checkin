@@ -6,8 +6,9 @@ const SOUNDS: Record<ScanStatus, Array<[number, number, number]>> = {
   ok: [[880, 0.15, 0]],
   dup: [[660, 0.12, 0], [660, 0.12, 0.2]],
   error: [[220, 0.5, 0]],
+  queued: [[880, 0.15, 0]],
 };
-const VIB: Record<ScanStatus, number[]> = { ok: [80], dup: [80, 80, 80], error: [300] };
+const VIB: Record<ScanStatus, number[]> = { ok: [80], dup: [80, 80, 80], error: [300], queued: [80] };
 
 let actx: AudioContext | null = null;
 

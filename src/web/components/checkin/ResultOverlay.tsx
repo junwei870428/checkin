@@ -1,6 +1,7 @@
 // 全螢幕結果畫面（F-CHK-5）。只是一般的 Box，不搶焦點，掃描槍可以在底下繼續輸入
 import CancelIcon from '@mui/icons-material/Cancel';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
 import ErrorIcon from '@mui/icons-material/Error';
 import { Box, Chip, Stack, Typography } from '@mui/material';
 import { useEffect } from 'react';
@@ -11,6 +12,8 @@ const LOOK: Record<ScanStatus, { bg: string; fg: string; Icon: typeof CheckCircl
   ok: { bg: '#1B7F3B', fg: '#FFFFFF', Icon: CheckCircleIcon, ms: 1600 },
   dup: { bg: '#F2A900', fg: '#1F1600', Icon: ErrorIcon, ms: 2600 },
   error: { bg: '#C62828', fg: '#FFFFFF', Icon: CancelIcon, ms: 2600 },
+  // 離線待上傳用藍色，避免和重複的黃色混淆
+  queued: { bg: '#1565C0', fg: '#FFFFFF', Icon: CloudOffIcon, ms: 1600 },
 };
 
 const chipSx = { bgcolor: 'rgba(255,255,255,.25)', color: 'inherit', fontWeight: 700 };
