@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CheckinContext, CheckinPerson, ScanRequest, ScanResponse } from '../src/shared/checkin';
+import type { CheckinContext, CheckinPerson, PassedSnapshot, ScanRequest, ScanResponse } from '../src/shared/checkin';
 import type { Scope } from '../src/shared/event';
 import type { ApiErrorBody } from '../src/shared/types';
 import type { Bindings } from '../src/worker/env';
@@ -330,12 +330,26 @@ describe('登入與權限', () => {
     ['POST', '/api/checkin/void', { scanId: 'x' }],
   ] as const;
 
-  it('活動已結束時所有報到 API 回 401', async () => {
-    const { env, checkin, staff } = await setup({ startAt: Date.now() - 2 * HOUR, endAt: Date.now() - 1000 });
+  it('活動結束超過補送寬限時間後，所有報到 API 回 401', async () => {
+    const { env, checkin, staff } = await setup({ startAt: Date.now() - 5 * HOUR, endAt: Date.now() - 2 * HOUR - 1000 });
     for (const [method, path, body] of requests(checkin)) {
       const res = await call(env, method, path, { body, cookie: staff.cookie });
       expect(res.status, path).toBe(401);
       expect(res.json).toEqual(ENDED_401);
+    }
+  });
+
+  it('活動剛結束的寬限時間內只有掃描 API 可用（給離線補送），其他回 401', async () => {
+    const { env, checkin, staff } = await setup({ startAt: Date.now() - 2 * HOUR, endAt: Date.now() - 1000 });
+    for (const [method, path, body] of requests(checkin)) {
+      const res = await call(env, method, path, { body, cookie: staff.cookie });
+      if (path === '/api/checkin/scan') {
+        expect(res.status).toBe(200);
+        expect(res.json).toMatchObject({ status: 'error', reason: 'ended' });
+      } else {
+        expect(res.status, path).toBe(401);
+        expect(res.json).toEqual(ENDED_401);
+      }
     }
   });
 
@@ -345,5 +359,72 @@ describe('登入與權限', () => {
       expect((await call(env, method, path, { body })).status, path).toBe(401);
       expect((await call(env, method, path, { body, cookie: owner.cookie })).status, path).toBe(403);
     }
+  });
+});
+
+describe('離線補送', () => {
+  const CID = 'offline-0001-abcd';
+  const rows = async (env: Bindings) =>
+    (await env.DB.prepare('SELECT id, scanned_at FROM scans ORDER BY rowid').all<{ id: string; scanned_at: number }>()).results;
+
+  it('裝置帶的 clientId 就是紀錄編號；同一筆重送回傳同一筆通過，不會重複寫入', async () => {
+    const { env, checkin, scan } = await setup();
+    const first = await scan({ stationId: checkin, code: '001023', clientId: CID });
+    expect(first.json).toMatchObject({ status: 'ok', scan: { id: CID } });
+    const again = await scan({ stationId: checkin, code: '001023', clientId: CID });
+    expect(again.json).toMatchObject({ status: 'ok', scan: { id: CID, scannedAt: first.json.scan!.scannedAt }, passedCount: 1 });
+    expect(await rows(env)).toHaveLength(1);
+  });
+
+  it('補送時用刷卡當下的時間寫入與判斷；活動剛結束時，結束前刷的仍可補送，結束後刷的不行', async () => {
+    const endAt = Date.now() - 60_000;
+    const { env, checkin, scan } = await setup({ startAt: endAt - 2 * HOUR, endAt });
+    const before = await scan({ stationId: checkin, code: '001023', clientId: CID, scannedAt: endAt - 5000 });
+    expect(before.json).toMatchObject({ status: 'ok', scan: { scannedAt: endAt - 5000 } });
+    expect((await rows(env))[0]).toEqual({ id: CID, scanned_at: endAt - 5000 });
+    const after = await scan({ stationId: checkin, code: '002001', clientId: 'offline-0002-abcd', scannedAt: endAt + 1000 });
+    expect(after.json).toMatchObject({ status: 'error', reason: 'ended' });
+  });
+
+  it('補送時發現別台已刷過，回傳重複', async () => {
+    const { env, ev, checkin, scan } = await setup();
+    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '001023', byAccount: 'XMAS-02', scannedAt: Date.now() - 1000 });
+    const res = await scan({ stationId: checkin, code: '001023', clientId: CID, scannedAt: Date.now() - 500 });
+    expect(res.json).toMatchObject({ status: 'dup', previous: { byAccount: 'XMAS-02' } });
+  });
+
+  it.each([
+    ['刷卡時間比伺服器快超過 1 分鐘', { scannedAt: Date.now() + 5 * 60_000 }],
+    ['刷卡時間超過 1 天前', { scannedAt: Date.now() - 2 * 86_400_000 }],
+    ['刷卡時間不是數字', { scannedAt: '123' }],
+    ['clientId 格式不對', { clientId: 'bad id!' }],
+  ])('%s 回 400', async (_, extra) => {
+    const { env, checkin, scan } = await setup();
+    expect((await scan({ stationId: checkin, code: '001023', ...extra })).status).toBe(400);
+    expect(await rows(env)).toHaveLength(0);
+  });
+});
+
+describe('GET /api/checkin/passed', () => {
+  it('回傳各關卡的有效紀錄；帶 cursor 只回傳之後的新紀錄，撤銷的不算', async () => {
+    const { env, ev, checkin, gift, staff } = await setup();
+    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '001023' });
+    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '002001', voided: true });
+    await seedScan(env, { eventId: ev.id, stationId: gift, empNo: '001023' });
+    const all = await call<PassedSnapshot>(env, 'GET', '/api/checkin/passed', { cookie: staff.cookie });
+    expect(all.status).toBe(200);
+    expect(all.json.rehearsal).toBe(false);
+    expect(all.json.items.sort()).toEqual([[checkin, '001023'], [gift, '001023']].sort());
+    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '002001' });
+    const next = await call<PassedSnapshot>(env, 'GET', `/api/checkin/passed?after=${all.json.cursor}`, { cookie: staff.cookie });
+    expect(next.json.items).toEqual([[checkin, '002001']]);
+    expect(next.json.cursor).toBeGreaterThan(all.json.cursor);
+  });
+
+  it('演練期間只回傳演練紀錄', async () => {
+    const { env, ev, checkin, staff } = await setup({ startAt: Date.now() + HOUR, endAt: Date.now() + 3 * HOUR, rehearsal: true });
+    await seedScan(env, { eventId: ev.id, stationId: checkin, empNo: '001023', rehearsal: true });
+    const res = await call<PassedSnapshot>(env, 'GET', '/api/checkin/passed', { cookie: staff.cookie });
+    expect(res.json).toMatchObject({ rehearsal: true, items: [[checkin, '001023']] });
   });
 });

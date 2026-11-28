@@ -1,7 +1,7 @@
 // 報到端 API（規劃書第 7 節 /api/checkin/*）：只接受報到人員，且只能存取自己活動的關卡與紀錄
 
 import { Hono, type Context } from 'hono';
-import type { CheckinContext, CheckinPerson, Device, ScanResponse, VoidResponse } from '../../shared/checkin';
+import type { CheckinContext, CheckinPerson, Device, PassedSnapshot, ScanResponse, VoidResponse } from '../../shared/checkin';
 import { eventPhase, type StationKind } from '../../shared/event';
 import { EVENT_COLUMNS, toEventRecord, type EventRow } from '../access';
 import { requireAuth, requireStaff } from '../auth';
@@ -12,6 +12,10 @@ import { decideScan, type ScanDecision } from '../scan';
 import { scopeSql } from '../scope';
 
 const MAX_CODE = 64;
+const CLIENT_ID = /^[A-Za-z0-9-]{8,64}$/;
+/** 補送時間的合理範圍：裝置時鐘最多快 1 分鐘，離線最久 1 天 */
+const MAX_AHEAD_MS = 60_000;
+const MAX_BEHIND_MS = 86_400_000;
 
 const first = <T>(r: D1Result) => r.results[0] as T | undefined;
 
@@ -37,19 +41,28 @@ interface ScanInput {
   code: string;
   manual: boolean;
   device: Device;
+  clientId: string | null;
+  scannedAt: number | null;
 }
 
-function parseScan(b: unknown, userAgent: string | undefined): { ok: true; value: ScanInput } | { ok: false; message: string } {
+function parseScan(b: unknown, userAgent: string | undefined, now: number): { ok: true; value: ScanInput } | { ok: false; message: string } {
   if (typeof b !== 'object' || b === null) return { ok: false, message: '掃描資料格式錯誤' };
-  const { stationId, code, manual = false, device } = b as Record<string, unknown>;
+  const { stationId, code, manual = false, device, clientId, scannedAt } = b as Record<string, unknown>;
   if (typeof stationId !== 'string' || !stationId) return { ok: false, message: '請選擇關卡' };
   const empNo = typeof code === 'string' ? code.trim() : '';
   if (!empNo) return { ok: false, message: '沒有讀到工號' };
   if (empNo.length > MAX_CODE) return { ok: false, message: `掃描內容超過 ${MAX_CODE} 個字元，不是識別證的 QR code` };
   if (typeof manual !== 'boolean') return { ok: false, message: '掃描資料格式錯誤' };
   if (device !== undefined && device !== 'mobile' && device !== 'desktop') return { ok: false, message: '掃描資料格式錯誤' };
+  if (clientId !== undefined && (typeof clientId !== 'string' || !CLIENT_ID.test(clientId))) return { ok: false, message: '掃描資料格式錯誤' };
+  if (scannedAt !== undefined && (typeof scannedAt !== 'number' || !Number.isFinite(scannedAt) || scannedAt > now + MAX_AHEAD_MS || scannedAt < now - MAX_BEHIND_MS)) {
+    return { ok: false, message: '掃描時間不正確，請確認裝置的日期與時間' };
+  }
   const fromUA: Device = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent ?? '') ? 'mobile' : 'desktop';
-  return { ok: true, value: { stationId, code: empNo, manual, device: device ?? fromUA } };
+  return {
+    ok: true,
+    value: { stationId, code: empNo, manual, device: device ?? fromUA, clientId: clientId ?? null, scannedAt: scannedAt === undefined ? null : Math.min(scannedAt, now) },
+  };
 }
 
 function toResponse(d: Exclude<ScanDecision, { kind: 'insert' }>, passedCount: number): ScanResponse {
@@ -103,15 +116,48 @@ export const checkinRoutes = new Hono<AppEnv>()
     ).bind(...s.binds).all<CheckinPerson>();
     return c.json(results);
   })
+  // 離線判斷用：本活動各關卡的有效紀錄。帶 after 只回傳 rowid 更大的新紀錄，
+  // 每個關卡一個查詢，走 idx_scans_event (event_id, station_id, rehearsal) 加上 rowid 範圍，讀取列數約等於新紀錄數
+  .get('/checkin/passed', requireAuth, requireStaff, async c => {
+    const a = staffOf(c);
+    const db = c.env.DB;
+    const after = Math.max(0, Math.floor(Number(c.req.query('after') ?? 0)) || 0);
+    const [evRes, stRes] = await db.batch([
+      eventStmt(db, a.eventId),
+      db.prepare('SELECT id FROM stations WHERE event_id = ?').bind(a.eventId),
+    ]);
+    const ev = toEventRecord(first<EventRow>(evRes)!);
+    const now = Date.now();
+    const rehearsal = eventPhase(ev, now) === 'rehearsal' ? 1 : 0;
+    const stations = (stRes.results as Array<{ id: string }>).map(s => s.id);
+    const res = stations.length
+      ? await db.batch(stations.map(id =>
+        db.prepare(
+          `SELECT rowid AS r, station_id AS s, emp_no AS e FROM scans
+            WHERE event_id = ? AND station_id = ? AND rehearsal = ? AND rowid > ? AND voided_at IS NULL`,
+        ).bind(a.eventId, id, rehearsal, after)))
+      : [];
+    const rows = res.flatMap(x => x.results as Array<{ r: number; s: string; e: string }>);
+    const body: PassedSnapshot = {
+      cursor: rows.reduce((m, x) => Math.max(m, x.r), after),
+      rehearsal: rehearsal === 1,
+      serverNow: now,
+      items: rows.map(x => [x.s, x.e]),
+    };
+    return c.json(body);
+  })
   .post('/checkin/scan', requireAuth, requireStaff, async c => {
     const a = staffOf(c);
-    const p = parseScan(await c.req.json().catch(() => null), c.req.header('user-agent'));
+    const now = Date.now();
+    const p = parseScan(await c.req.json().catch(() => null), c.req.header('user-agent'), now);
     if (!p.ok) return apiError(c, 400, 'bad_request', p.message);
-    const { stationId, code, manual, device } = p.value;
+    const { stationId, code, manual, device, clientId } = p.value;
+    // 補送的離線紀錄以刷卡當下的時間判斷活動階段與寫入時間
+    const at = p.value.scannedAt ?? now;
     const db = c.env.DB;
 
     // 一次取齊第 4 節要比對的資料，全部是索引點查
-    const [evRes, accRes, stRes, empRes, memRes, scansRes] = await db.batch([
+    const [evRes, accRes, stRes, empRes, memRes, scansRes, mineRes] = await db.batch([
       eventStmt(db, a.eventId),
       accountStmt(db, a.id),
       db.prepare('SELECT kind, require_checkin, passed_count FROM stations WHERE id = ? AND event_id = ?').bind(stationId, a.eventId),
@@ -122,14 +168,25 @@ export const checkinRoutes = new Hono<AppEnv>()
            FROM stations st JOIN scans s ON s.station_id = st.id
           WHERE st.event_id = ? AND s.emp_no = ? AND s.voided_at IS NULL`,
       ).bind(a.eventId, code),
+      // 重送：這個編號已經寫入過（例如回應在路上遺失），直接回傳那一筆
+      db.prepare('SELECT scanned_at, rehearsal, by_account, by_holder FROM scans WHERE id = ? AND event_id = ? AND station_id = ?')
+        .bind(clientId ?? '', a.eventId, stationId),
     ]);
     const station = first<{ kind: StationKind; require_checkin: number; passed_count: number }>(stRes);
     if (!station) return apiError(c, 400, 'bad_station', '這個關卡不屬於本活動');
     const ev = toEventRecord(first<EventRow>(evRes)!);
     const emp = first<{ emp_no: string; name: string; dept: string; plant: string; active: number }>(empRes);
     const scans = scansRes.results as Array<{ station_id: string; kind: StationKind; rehearsal: number; scanned_at: number; by_account: string; by_holder: string }>;
-
-    const now = Date.now();
+    const mine = first<{ scanned_at: number; rehearsal: number; by_account: string; by_holder: string }>(mineRes);
+    if (mine && emp) {
+      const body: ScanResponse = {
+        status: 'ok', reason: null, rehearsal: mine.rehearsal === 1, previous: null,
+        employee: { empNo: emp.emp_no, name: emp.name, dept: emp.dept, plant: emp.plant },
+        scan: { id: clientId!, scannedAt: mine.scanned_at, byAccount: mine.by_account, byHolder: mine.by_holder },
+        passedCount: mine.rehearsal === 1 ? (await countStmt(db, stationId, true).first<number>('n'))! : station.passed_count,
+      };
+      return c.json(body);
+    }
     const d = decideScan({
       event: { startAt: ev.startAt, endAt: ev.endAt, rehearsal: ev.rehearsal, scope: ev.scope },
       station: { id: stationId, kind: station.kind, requireCheckin: station.require_checkin === 1 },
@@ -143,7 +200,7 @@ export const checkinRoutes = new Hono<AppEnv>()
         byAccount: x.by_account,
         byHolder: x.by_holder,
       })),
-    }, now);
+    }, at);
 
     if (d.kind !== 'insert') {
       const passedCount = d.rehearsal ? (await countStmt(db, stationId, true).first<number>('n'))! : station.passed_count;
@@ -151,14 +208,14 @@ export const checkinRoutes = new Hono<AppEnv>()
     }
 
     // 多台裝置同時掃到同一人時由部分唯一索引擋下，寫入 0 列就回傳先寫入的那筆
-    const id = newId();
+    const id = clientId ?? newId();
     const { account, holder } = first<{ account: string; holder: string }>(accRes)!;
     const rehearsal = d.rehearsal ? 1 : 0;
     const [ins, activeRes, countRes] = await db.batch([
       db.prepare(
         `INSERT INTO scans (id, event_id, station_id, emp_no, rehearsal, scanned_at, by_account, by_holder, device, manual)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-      ).bind(id, a.eventId, stationId, d.employee.empNo, rehearsal, now, account, holder, device, manual ? 1 : 0),
+      ).bind(id, a.eventId, stationId, d.employee.empNo, rehearsal, at, account, holder, device, manual ? 1 : 0),
       db.prepare('SELECT scanned_at, by_account, by_holder FROM scans WHERE station_id = ? AND emp_no = ? AND rehearsal = ? AND voided_at IS NULL')
         .bind(stationId, d.employee.empNo, rehearsal),
       countStmt(db, stationId, d.rehearsal),
@@ -172,7 +229,7 @@ export const checkinRoutes = new Hono<AppEnv>()
     }
     const body: ScanResponse = {
       status: 'ok', reason: null, rehearsal: d.rehearsal, employee: d.employee,
-      scan: { id, scannedAt: now, byAccount: account, byHolder: holder }, previous: null, passedCount,
+      scan: { id, scannedAt: at, byAccount: account, byHolder: holder }, previous: null, passedCount,
     };
     return c.json(body);
   })
